@@ -3,21 +3,26 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct AppConfig {
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct Config {
     pub entries: Vec<FileEntry>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
 }
 
 pub struct ConfigManager {
     config_path: PathBuf,
+}
+
+impl Default for ConfigManager {
+    fn default() -> Self {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        
+        Self {
+            config_path: exe_dir.join("file_manager_config.json"),
+        }
+    }
 }
 
 impl ConfigManager {
@@ -32,7 +37,7 @@ impl ConfigManager {
         }
     }
 
-    pub fn save_config(&self, config: &AppConfig) -> Result<(), String> {
+    pub fn save_config(&self, config: &Config) -> Result<(), String> {
         match serde_json::to_string_pretty(config) {
             Ok(json) => {
                 fs::write(&self.config_path, json).map_err(|e| format!("保存配置失败: {}", e))
@@ -41,25 +46,20 @@ impl ConfigManager {
         }
     }
 
-    pub fn load_config(&self) -> AppConfig {
+    pub fn load_config(&self) -> Result<Config, String> {
         match fs::read_to_string(&self.config_path) {
             Ok(content) => {
-                // 尝试加载新格式配置
-                if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
-                    config
-                } else {
-                    // 兼容旧格式：只有entries数组
-                    let entries: Vec<FileEntry> = serde_json::from_str(&content).unwrap_or_default();
-                    AppConfig {
-                        entries,
-                    }
-                }
+                serde_json::from_str::<Config>(&content)
+                    .or_else(|_| {
+                        // 兼容旧格式：只有entries数组
+                        let entries: Vec<FileEntry> = serde_json::from_str(&content).unwrap_or_default();
+                        Ok(Config { entries })
+                    })
+                    .map_err(|e: serde_json::Error| format!("解析配置失败: {}", e))
             }
-            Err(_) => AppConfig::default(),
+            Err(_) => Ok(Config::default()),
         }
     }
-
-
 
     pub fn get_config_path(&self) -> &PathBuf {
         &self.config_path
