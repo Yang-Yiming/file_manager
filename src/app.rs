@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 pub struct FileManagerApp {
     entries: Vec<FileEntry>,
     current_path_input: String,
+    current_name_input: String,
+    current_description_input: String,
     current_tag_input: String,
     search_query: String,
     config_manager: ConfigManager,
@@ -13,6 +15,7 @@ pub struct FileManagerApp {
     error_message: Option<String>,
     config: AppConfig,
     font_loaded: bool,
+    sidebar_expanded: bool,
 }
 
 impl Default for FileManagerApp {
@@ -31,12 +34,15 @@ impl FileManagerApp {
             entries,
             config_manager,
             current_path_input: String::new(),
+            current_name_input: String::new(),
+            current_description_input: String::new(),
             current_tag_input: String::new(),
             search_query: String::new(),
             selected_entry_index: None,
             error_message: None,
             config,
             font_loaded: false,
+            sidebar_expanded: true,
         }
     }
 
@@ -48,7 +54,7 @@ impl FileManagerApp {
         }
     }
 
-    fn add_entry(&mut self, path: &str, tags: Vec<String>) {
+    fn add_entry(&mut self, path: &str, name: &str, description: Option<String>, tags: Vec<String>) {
         let path_buf = PathBuf::from(path.trim());
 
         if !path_buf.exists() {
@@ -62,7 +68,16 @@ impl FileManagerApp {
             return;
         }
 
-        let entry = FileEntry::new(path_buf, tags);
+        let entry_name = if name.trim().is_empty() {
+            path_buf.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("未命名")
+                .to_string()
+        } else {
+            name.trim().to_string()
+        };
+
+        let entry = FileEntry::new(path_buf, entry_name, description, tags);
         self.entries.push(entry);
         self.save_config();
         self.error_message = None;
@@ -75,7 +90,7 @@ impl FileManagerApp {
         }
     }
 
-    fn update_entry(&mut self, index: usize, path: &str, tags: Vec<String>) {
+    fn update_entry(&mut self, index: usize, path: &str, name: &str, description: Option<String>, tags: Vec<String>) {
         let path_buf = PathBuf::from(path.trim());
 
         if !path_buf.exists() {
@@ -84,10 +99,21 @@ impl FileManagerApp {
         }
 
         if index < self.entries.len() {
-            self.entries[index] = FileEntry::new(path_buf, tags);
+            let entry_name = if name.trim().is_empty() {
+                path_buf.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("未命名")
+                    .to_string()
+            } else {
+                name.trim().to_string()
+            };
+
+            self.entries[index] = FileEntry::new(path_buf, entry_name, description, tags);
             self.save_config();
             self.selected_entry_index = None;
             self.current_path_input.clear();
+            self.current_name_input.clear();
+            self.current_description_input.clear();
             self.current_tag_input.clear();
             self.error_message = None;
         }
@@ -126,6 +152,8 @@ impl FileManagerApp {
                             if ui.small_button("❌ 取消编辑").clicked() {
                                 self.selected_entry_index = None;
                                 self.current_path_input.clear();
+                                self.current_name_input.clear();
+                                self.current_description_input.clear();
                                 self.current_tag_input.clear();
                             }
                         }
@@ -133,6 +161,18 @@ impl FileManagerApp {
                 });
 
                 ui.separator();
+
+                // 名称输入区域
+                ui.vertical(|ui| {
+                    ui.label("📝 显示名称:");
+                    ui.add_sized(
+                        [ui.available_width(), 24.0],
+                        egui::TextEdit::singleline(&mut self.current_name_input)
+                            .hint_text("为这个条目起个好记的名字...")
+                    );
+                });
+
+                ui.add_space(8.0);
 
                 // 路径输入区域
                 ui.vertical(|ui| {
@@ -156,6 +196,18 @@ impl FileManagerApp {
                             }
                         }
                     });
+                });
+
+                ui.add_space(8.0);
+
+                // 描述输入区域
+                ui.vertical(|ui| {
+                    ui.label("📄 描述 (可选):");
+                    ui.add_sized(
+                        [ui.available_width(), 48.0],
+                        egui::TextEdit::multiline(&mut self.current_description_input)
+                            .hint_text("为这个条目添加详细描述...")
+                    );
                 });
 
                 ui.add_space(8.0);
@@ -190,7 +242,7 @@ impl FileManagerApp {
                     ui.visuals_mut().widgets.hovered.bg_fill = button_color.gamma_multiply(1.2);
                     ui.visuals_mut().widgets.active.bg_fill = button_color.gamma_multiply(0.8);
 
-                    let button = ui.add_sized([120.0, 32.0], egui::Button::new(button_text));
+                    let button = ui.add_sized([120.0, 32.0], egui::Button::new(button_text).wrap(false));
                     
                     if button.clicked() {
                         let tags: Vec<String> = self
@@ -201,14 +253,22 @@ impl FileManagerApp {
                             .collect();
 
                         let path_input = self.current_path_input.clone();
+                        let name_input = self.current_name_input.clone();
+                        let description_input = if self.current_description_input.trim().is_empty() {
+                            None
+                        } else {
+                            Some(self.current_description_input.clone())
+                        };
                         
                         if let Some(index) = self.selected_entry_index {
-                            self.update_entry(index, &path_input, tags);
+                            self.update_entry(index, &path_input, &name_input, description_input, tags);
                         } else {
-                            self.add_entry(&path_input, tags);
+                            self.add_entry(&path_input, &name_input, description_input, tags);
 
                             if self.error_message.is_none() {
                                 self.current_path_input.clear();
+                                self.current_name_input.clear();
+                                self.current_description_input.clear();
                                 self.current_tag_input.clear();
                             }
                         }
@@ -402,6 +462,8 @@ impl FileManagerApp {
 
                     // 克隆需要的值以避免借用冲突
                     let entry_path = entry.path.clone();
+                    let entry_name = entry.name.clone();
+                    let entry_description = entry.description.clone();
                     let entry_tags = entry.tags.clone();
                     let entry_is_directory = entry.is_directory;
                     let entry_created_at = entry.created_at;
@@ -420,14 +482,13 @@ impl FileManagerApp {
                         
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
-                                // 图标和路径
+                                // 图标
                                 let icon = if entry_is_directory { "📁" } else { "📄" };
                                 ui.label(icon);
 
-                                // 路径（可点击）
-                                let path_text = entry_path.to_string_lossy();
+                                // 显示名称（可点击）
                                 let response = ui.add(
-                                    egui::Label::new(&*path_text)
+                                    egui::Label::new(&entry_name)
                                         .sense(egui::Sense::click())
                                 );
                                 
@@ -440,15 +501,33 @@ impl FileManagerApp {
                                 }
 
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button("🗑️ 删除").clicked() {
+                                    if ui.small_button("🗑️").clicked() {
                                         to_remove = Some(index);
                                     }
 
-                                    if ui.small_button("📝 编辑").clicked() {
+                                    if ui.small_button("📝").clicked() {
                                         to_edit = Some(index);
                                     }
                                 });
                             });
+
+                            // 路径行（小字显示）
+                            ui.horizontal(|ui| {
+                                ui.colored_label(
+                                    egui::Color32::GRAY,
+                                    format!("📍 {}", entry_path.to_string_lossy())
+                                );
+                            });
+
+                            // 描述行
+                            if let Some(description) = &entry_description {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(
+                                        egui::Color32::DARK_GRAY,
+                                        format!("📄 {}", description)
+                                    );
+                                });
+                            }
 
                             // 标签行
                             if !entry_tags.is_empty() {
@@ -484,6 +563,8 @@ impl FileManagerApp {
                     let entry = &self.entries[index];
                     self.selected_entry_index = Some(index);
                     self.current_path_input = entry.path.to_string_lossy().to_string();
+                    self.current_name_input = entry.name.clone();
+                    self.current_description_input = entry.description.clone().unwrap_or_default();
                     self.current_tag_input = entry.tags.join(", ");
                 }
 
@@ -508,24 +589,58 @@ impl eframe::App for FileManagerApp {
             if !i.raw.dropped_files.is_empty() {
                 for file in &i.raw.dropped_files {
                     if let Some(path) = &file.path {
-                        self.add_entry(&path.to_string_lossy(), vec!["拖拽添加".to_string()]);
+                        self.add_entry(&path.to_string_lossy(), "", None, vec!["拖拽添加".to_string()]);
                     }
                 }
             }
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // 标题栏
+        // 顶部工具栏
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🗂️ 文件快速访问器");
+                
+                // 侧边栏切换按钮
+                ui.separator();
+                let toggle_text = if self.sidebar_expanded { "◀ 收起" } else { "▶ 展开" };
+                if ui.button(toggle_text).clicked() {
+                    self.sidebar_expanded = !self.sidebar_expanded;
+                }
+                
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.colored_label(egui::Color32::GRAY, "v1.0 - 高性能版本");
                 });
             });
+        });
 
-            ui.separator();
+        // 底部状态栏
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.small(format!(
+                    "配置文件: {}",
+                    self.config_manager.get_config_path().display()
+                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.small("💡 支持拖拽文件到窗口");
+                });
+            });
+        });
 
-            // 搜索区域 - 移到顶部
+        // 右侧边栏（添加面板）
+        if self.sidebar_expanded {
+            egui::SidePanel::right("add_panel")
+                .resizable(true)
+                .default_width(300.0)
+                .min_width(250.0)
+                .max_width(500.0)
+                .show(ctx, |ui| {
+                    self.render_add_section(ui);
+                });
+        }
+
+        // 主内容区域
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // 搜索区域
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.strong("🔍 快速搜索");
@@ -533,7 +648,7 @@ impl eframe::App for FileManagerApp {
                     let search_response = ui.add_sized(
                         [ui.available_width() - 80.0, 24.0],
                         egui::TextEdit::singleline(&mut self.search_query)
-                            .hint_text("搜索路径、标签或文件名...")
+                            .hint_text("搜索名称、路径、描述、标签...")
                     );
                     
                     if search_response.changed() {
@@ -549,28 +664,8 @@ impl eframe::App for FileManagerApp {
 
             ui.add_space(8.0);
 
-            // 添加新条目区域
-            self.render_add_section(ui);
-
-            ui.add_space(8.0);
-
-            ui.separator();
-
             // 文件列表
             self.render_file_list(ui);
-
-            ui.separator();
-
-            // 底部信息
-            ui.horizontal(|ui| {
-                ui.small(format!(
-                    "配置文件: {}",
-                    self.config_manager.get_config_path().display()
-                ));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.small("💡 支持拖拽文件到窗口");
-                });
-            });
         });
     }
 }
