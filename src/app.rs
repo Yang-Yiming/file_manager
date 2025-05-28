@@ -12,6 +12,7 @@ pub struct FileManagerApp {
     selected_entry_index: Option<usize>,
     error_message: Option<String>,
     config: AppConfig,
+    font_loaded: bool,
 }
 
 impl Default for FileManagerApp {
@@ -35,6 +36,7 @@ impl FileManagerApp {
             selected_entry_index: None,
             error_message: None,
             config,
+            font_loaded: false,
         }
     }
 
@@ -115,117 +117,184 @@ impl FileManagerApp {
     }
 
     fn render_add_section(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("➕ 添加新文件/文件夹", |ui| {
-            ui.horizontal(|ui| {
-                ui.label("路径:");
-                ui.text_edit_singleline(&mut self.current_path_input);
-                if ui.button("📁 浏览").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        self.current_path_input = path.to_string_lossy().to_string();
-                    }
-                }
-                if ui.button("📄 选择文件").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        self.current_path_input = path.to_string_lossy().to_string();
-                    }
-                }
-            });
+        ui.group(|ui| {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("➕ 添加新文件/文件夹");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.selected_entry_index.is_some() {
+                            if ui.small_button("❌ 取消编辑").clicked() {
+                                self.selected_entry_index = None;
+                                self.current_path_input.clear();
+                                self.current_tag_input.clear();
+                            }
+                        }
+                    });
+                });
 
-            ui.horizontal(|ui| {
-                ui.label("标签 (逗号分隔):");
-                ui.text_edit_singleline(&mut self.current_tag_input);
-            });
+                ui.separator();
 
-            ui.horizontal(|ui| {
-                let button_text = if self.selected_entry_index.is_some() {
-                    "💾 更新"
-                } else {
-                    "➕ 添加"
-                };
+                // 路径输入区域
+                ui.vertical(|ui| {
+                    ui.label("📍 文件/文件夹路径:");
+                    ui.horizontal(|ui| {
+                        let _path_input = ui.add_sized(
+                            [ui.available_width() - 160.0, 24.0],
+                            egui::TextEdit::singleline(&mut self.current_path_input)
+                                .hint_text("输入路径或使用浏览按钮选择...")
+                        );
+                        
+                        if ui.button("📁 文件夹").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                self.current_path_input = path.to_string_lossy().to_string();
+                            }
+                        }
+                        
+                        if ui.button("📄 文件").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                self.current_path_input = path.to_string_lossy().to_string();
+                            }
+                        }
+                    });
+                });
 
-                if ui.button(button_text).clicked() {
-                    let tags: Vec<String> = self
-                        .current_tag_input
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
+                ui.add_space(8.0);
 
-                    let path_input = self.current_path_input.clone();
-                    
-                    if let Some(index) = self.selected_entry_index {
-                        self.update_entry(index, &path_input, tags);
+                // 标签输入区域
+                ui.vertical(|ui| {
+                    ui.label("🏷️ 标签 (用逗号分隔):");
+                    ui.add_sized(
+                        [ui.available_width(), 24.0],
+                        egui::TextEdit::singleline(&mut self.current_tag_input)
+                            .hint_text("例如: 工作, 重要, 项目...")
+                    );
+                });
+
+                ui.add_space(8.0);
+
+                // 操作按钮区域
+                ui.horizontal(|ui| {
+                    let button_text = if self.selected_entry_index.is_some() {
+                        "🔄 更新条目"
                     } else {
-                        self.add_entry(&path_input, tags);
+                        "➕ 添加到列表"
+                    };
 
-                        if self.error_message.is_none() {
-                            self.current_path_input.clear();
-                            self.current_tag_input.clear();
+                    let button_color = if self.selected_entry_index.is_some() {
+                        egui::Color32::from_rgb(70, 130, 180)  // 蓝色用于更新
+                    } else {
+                        egui::Color32::from_rgb(34, 139, 34)   // 绿色用于添加
+                    };
+
+                    ui.visuals_mut().widgets.inactive.bg_fill = button_color;
+                    ui.visuals_mut().widgets.hovered.bg_fill = button_color.gamma_multiply(1.2);
+                    ui.visuals_mut().widgets.active.bg_fill = button_color.gamma_multiply(0.8);
+
+                    let button = ui.add_sized([120.0, 32.0], egui::Button::new(button_text));
+                    
+                    if button.clicked() {
+                        let tags: Vec<String> = self
+                            .current_tag_input
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
+                        let path_input = self.current_path_input.clone();
+                        
+                        if let Some(index) = self.selected_entry_index {
+                            self.update_entry(index, &path_input, tags);
+                        } else {
+                            self.add_entry(&path_input, tags);
+
+                            if self.error_message.is_none() {
+                                self.current_path_input.clear();
+                                self.current_tag_input.clear();
+                            }
                         }
                     }
-                }
 
-                if self.selected_entry_index.is_some() && ui.button("❌ 取消编辑").clicked() {
-                    self.selected_entry_index = None;
-                    self.current_path_input.clear();
-                    self.current_tag_input.clear();
+                    // 快捷键提示
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.colored_label(
+                            egui::Color32::GRAY, 
+                            "💡 提示: 可直接拖拽文件到窗口"
+                        );
+                    });
+                });
+
+                // 错误信息显示
+                if let Some(error) = &self.error_message.clone() {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.colored_label(egui::Color32::RED, "❌ 错误:");
+                        ui.colored_label(egui::Color32::RED, error);
+                        if ui.small_button("✖").clicked() {
+                            self.error_message = None;
+                        }
+                    });
                 }
             });
-        });
-
-        // 字体设置
-        ui.horizontal(|ui| {
-            ui.label("🔧");
-            if ui.checkbox(&mut self.config.enable_chinese_font, "中文字体支持").clicked() {
-                self.save_config();
-            }
-            if self.config.enable_chinese_font {
-                ui.colored_label(egui::Color32::GRAY, "(需重启生效)");
-            }
         });
     }
 
-    fn setup_chinese_fonts(&self, ctx: &egui::Context) {
+    fn setup_chinese_fonts(&mut self, ctx: &egui::Context) {
+        if self.font_loaded {
+            return;
+        }
+
         let mut fonts = egui::FontDefinitions::default();
         
-        // 尝试使用系统中文字体
-        let font_data = self.try_load_system_chinese_font();
+        // 尝试加载多个中文字体以获得更好的字符覆盖率
+        let font_sources = self.get_all_chinese_fonts();
         
-        if let Some(data) = font_data {
-            fonts.font_data.insert(
-                "chinese".to_owned(),
-                egui::FontData::from_owned(data)
-            );
-
-            // 将中文字体添加到字体族
+        for (name, data) in font_sources {
+            fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data));
+            
+            // 将字体添加到字体族
             fonts
                 .families
                 .entry(egui::FontFamily::Proportional)
                 .or_default()
-                .insert(0, "chinese".to_owned());
+                .insert(0, name.clone());
 
             fonts
                 .families
                 .entry(egui::FontFamily::Monospace)
                 .or_default()
-                .push("chinese".to_owned());
-
-            ctx.set_fonts(fonts);
+                .push(name);
         }
+
+        // 确保有 emoji 支持
+        if let Some(emoji_font) = self.try_load_emoji_font() {
+            fonts.font_data.insert("emoji".to_owned(), egui::FontData::from_owned(emoji_font));
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "emoji".to_owned());
+        }
+
+        ctx.set_fonts(fonts);
+        self.font_loaded = true;
     }
 
-    fn try_load_system_chinese_font(&self) -> Option<Vec<u8>> {
+    fn get_all_chinese_fonts(&self) -> Vec<(String, Vec<u8>)> {
+        let mut fonts = Vec::new();
+        
         // macOS 系统字体
         #[cfg(target_os = "macos")]
         {
-            let paths = vec![
-                "/System/Library/Fonts/PingFang.ttc",
-                "/System/Library/Fonts/STHeiti Light.ttc",
-                "/System/Library/Fonts/Helvetica.ttc",
+            let font_paths = vec![
+                ("pingfang", "/System/Library/Fonts/PingFang.ttc"),
+                ("heiti", "/System/Library/Fonts/STHeiti Light.ttc"),
+                ("hiragino", "/System/Library/Fonts/Hiragino Sans GB.ttc"),
+                ("arial_unicode", "/System/Library/Fonts/Arial Unicode.ttf"),
             ];
-            for path in paths {
+            
+            for (name, path) in font_paths {
                 if let Ok(data) = std::fs::read(path) {
-                    return Some(data);
+                    fonts.push((name.to_string(), data));
                 }
             }
         }
@@ -233,14 +302,17 @@ impl FileManagerApp {
         // Windows 系统字体
         #[cfg(target_os = "windows")]
         {
-            let paths = vec![
-                "C:\\Windows\\Fonts\\msyh.ttc",    // 微软雅黑
-                "C:\\Windows\\Fonts\\simhei.ttf",  // 黑体
-                "C:\\Windows\\Fonts\\simsun.ttc",  // 宋体
+            let font_paths = vec![
+                ("msyh", "C:\\Windows\\Fonts\\msyh.ttc"),      // 微软雅黑
+                ("simhei", "C:\\Windows\\Fonts\\simhei.ttf"),  // 黑体
+                ("simsun", "C:\\Windows\\Fonts\\simsun.ttc"),  // 宋体
+                ("simkai", "C:\\Windows\\Fonts\\simkai.ttf"),  // 楷体
+                ("arial_unicode", "C:\\Windows\\Fonts\\ARIALUNI.TTF"), // Arial Unicode MS
             ];
-            for path in paths {
+            
+            for (name, path) in font_paths {
                 if let Ok(data) = std::fs::read(path) {
-                    return Some(data);
+                    fonts.push((name.to_string(), data));
                 }
             }
         }
@@ -248,10 +320,43 @@ impl FileManagerApp {
         // Linux 系统字体
         #[cfg(target_os = "linux")]
         {
+            let font_paths = vec![
+                ("noto_cjk", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+                ("wqy_microhei", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+                ("wqy_zenhei", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+                ("source_han", "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Regular.otf"),
+            ];
+            
+            for (name, path) in font_paths {
+                if let Ok(data) = std::fs::read(path) {
+                    fonts.push((name.to_string(), data));
+                }
+            }
+        }
+
+        fonts
+    }
+
+    fn try_load_emoji_font(&self) -> Option<Vec<u8>> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(data) = std::fs::read("/System/Library/Fonts/Apple Color Emoji.ttc") {
+                return Some(data);
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\seguiemj.ttf") {
+                return Some(data);
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
             let paths = vec![
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+                "/usr/share/fonts/TTF/NotoColorEmoji.ttf",
             ];
             for path in paths {
                 if let Ok(data) = std::fs::read(path) {
@@ -264,10 +369,20 @@ impl FileManagerApp {
     }
 
     fn render_file_list(&mut self, ui: &mut egui::Ui) {
-        ui.label(format!("📋 已保存的路径 ({})", self.entries.len()));
+        ui.horizontal(|ui| {
+            ui.strong("📋 已保存的路径");
+            ui.separator();
+            ui.small(format!("共 {} 项", self.entries.len()));
+            if !self.search_query.is_empty() {
+                ui.separator();
+                ui.colored_label(egui::Color32::BLUE, format!("筛选: {}", self.search_query));
+            }
+        });
+
+        ui.separator();
 
         egui::ScrollArea::vertical()
-            .max_height(400.0)
+            .auto_shrink([false; 2])
             .show(ui, |ui| {
                 // 收集匹配的条目索引
                 let filtered_indices: Vec<usize> = self
@@ -283,35 +398,81 @@ impl FileManagerApp {
 
                 for &index in &filtered_indices {
                     let entry = &self.entries[index];
+                    let is_selected = self.selected_entry_index == Some(index);
 
-                    ui.horizontal(|ui| {
-                        // 图标
-                        let icon = if entry.is_directory { "📁" } else { "📄" };
-                        ui.label(icon);
+                    // 克隆需要的值以避免借用冲突
+                    let entry_path = entry.path.clone();
+                    let entry_tags = entry.tags.clone();
+                    let entry_is_directory = entry.is_directory;
+                    let entry_created_at = entry.created_at;
 
-                        // 路径（可点击）
-                        if ui.link(entry.path.to_string_lossy()).clicked() {
-                            self.open_path(&entry.path);
+                    // 为选中项添加背景色
+                    let bg_color = if is_selected {
+                        Some(egui::Color32::from_rgb(230, 240, 255))
+                    } else {
+                        None
+                    };
+
+                    ui.group(|ui| {
+                        if let Some(color) = bg_color {
+                            ui.visuals_mut().widgets.noninteractive.bg_fill = color;
                         }
+                        
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                // 图标和路径
+                                let icon = if entry_is_directory { "📁" } else { "📄" };
+                                ui.label(icon);
 
-                        ui.separator();
+                                // 路径（可点击）
+                                let path_text = entry_path.to_string_lossy();
+                                let response = ui.add(
+                                    egui::Label::new(&*path_text)
+                                        .sense(egui::Sense::click())
+                                );
+                                
+                                if response.clicked() {
+                                    self.open_path(&entry_path);
+                                }
+                                
+                                if response.hovered() {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
 
-                        // 标签
-                        for tag in &entry.tags {
-                            ui.small(format!("🏷️ {}", tag));
-                        }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button("🗑️ 删除").clicked() {
+                                        to_remove = Some(index);
+                                    }
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("🗑️").clicked() {
-                                to_remove = Some(index);
+                                    if ui.small_button("📝 编辑").clicked() {
+                                        to_edit = Some(index);
+                                    }
+                                });
+                            });
+
+                            // 标签行
+                            if !entry_tags.is_empty() {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    for tag in &entry_tags {
+                                        if ui.small_button(format!("🏷️ {}", tag)).clicked() {
+                                            self.search_query = tag.clone();
+                                        }
+                                    }
+                                });
                             }
 
-                            if ui.button("📝").clicked() {
-                                to_edit = Some(index);
-                            }
+                            // 添加时间
+                            ui.horizontal(|ui| {
+                                ui.colored_label(
+                                    egui::Color32::GRAY,
+                                    format!("📅 {}", entry_created_at.format("%Y-%m-%d %H:%M"))
+                                );
+                            });
                         });
                     });
-                    ui.separator();
+                    
+                    ui.add_space(4.0);
                 }
 
                 // 处理删除和编辑操作
@@ -338,11 +499,9 @@ impl FileManagerApp {
 
 impl eframe::App for FileManagerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 只在第一次运行时设置字体
-        static mut FONT_SETUP: bool = false;
-        if self.config.enable_chinese_font && unsafe { !FONT_SETUP } {
+        // 设置中文字体（始终启用）
+        if !self.font_loaded {
             self.setup_chinese_fonts(ctx);
-            unsafe { FONT_SETUP = true; }
         }
         // 处理拖拽文件
         ctx.input(|i| {
@@ -356,28 +515,44 @@ impl eframe::App for FileManagerApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("🗂️ 文件快速访问器");
+            // 标题栏
+            ui.horizontal(|ui| {
+                ui.heading("🗂️ 文件快速访问器");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.colored_label(egui::Color32::GRAY, "v1.0 - 高性能版本");
+                });
+            });
 
             ui.separator();
 
-            // 错误消息显示
-            if let Some(ref error) = self.error_message {
-                ui.colored_label(egui::Color32::RED, error);
-            }
+            // 搜索区域 - 移到顶部
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("🔍 快速搜索");
+                    ui.separator();
+                    let search_response = ui.add_sized(
+                        [ui.available_width() - 80.0, 24.0],
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("搜索路径、标签或文件名...")
+                    );
+                    
+                    if search_response.changed() {
+                        // 搜索时自动去除错误消息
+                        self.error_message = None;
+                    }
+                    
+                    if ui.small_button("🗑️ 清空").clicked() {
+                        self.search_query.clear();
+                    }
+                });
+            });
+
+            ui.add_space(8.0);
 
             // 添加新条目区域
             self.render_add_section(ui);
 
-            ui.separator();
-
-            // 搜索区域
-            ui.horizontal(|ui| {
-                ui.label("🔍 搜索:");
-                ui.text_edit_singleline(&mut self.search_query);
-                if ui.button("清空").clicked() {
-                    self.search_query.clear();
-                }
-            });
+            ui.add_space(8.0);
 
             ui.separator();
 

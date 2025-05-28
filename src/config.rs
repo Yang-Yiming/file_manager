@@ -5,14 +5,12 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
-    pub enable_chinese_font: bool,
     pub entries: Vec<FileEntry>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            enable_chinese_font: false,
             entries: Vec::new(),
         }
     }
@@ -24,10 +22,13 @@ pub struct ConfigManager {
 
 impl ConfigManager {
     pub fn new() -> Self {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        
         Self {
-            config_path: dirs::config_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("file_manager_config.json"),
+            config_path: exe_dir.join("file_manager_config.json"),
         }
     }
 
@@ -50,7 +51,6 @@ impl ConfigManager {
                     // 兼容旧格式：只有entries数组
                     let entries: Vec<FileEntry> = serde_json::from_str(&content).unwrap_or_default();
                     AppConfig {
-                        enable_chinese_font: false,
                         entries,
                     }
                 }
