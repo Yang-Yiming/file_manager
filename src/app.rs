@@ -143,159 +143,244 @@ impl FileManagerApp {
     }
 
     fn render_add_section(&mut self, ui: &mut egui::Ui) {
-        ui.group(|ui| {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.strong("➕ 添加新文件/文件夹");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.selected_entry_index.is_some() {
-                            if ui.small_button("❌ 取消编辑").clicked() {
-                                self.selected_entry_index = None;
-                                self.current_path_input.clear();
-                                self.current_name_input.clear();
-                                self.current_description_input.clear();
-                                self.current_tag_input.clear();
-                            }
-                        }
-                    });
-                });
-
-                ui.separator();
-
-                // 名称输入区域
+        // 美化的添加面板
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgb(250, 251, 252))
+            .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(220, 220, 220)))
+            .rounding(egui::Rounding::same(12.0))
+            .inner_margin(egui::Margin::same(16.0))
+            .shadow(egui::epaint::Shadow {
+                extrusion: 3.0,
+                color: egui::Color32::from_black_alpha(15),
+            })
+            .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.label("📝 显示名称:");
-                    ui.add_sized(
-                        [ui.available_width(), 24.0],
-                        egui::TextEdit::singleline(&mut self.current_name_input)
-                            .hint_text("为这个条目起个好记的名字...")
-                    );
-                });
-
-                ui.add_space(8.0);
-
-                // 路径输入区域
-                ui.vertical(|ui| {
-                    ui.label("📍 文件/文件夹路径:");
+                    // 标题区域
                     ui.horizontal(|ui| {
-                        let _path_input = ui.add_sized(
-                            [ui.available_width() - 160.0, 24.0],
-                            egui::TextEdit::singleline(&mut self.current_path_input)
-                                .hint_text("输入路径或使用浏览按钮选择...")
-                        );
-                        
-                        if ui.button("📁 文件夹").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                self.current_path_input = path.to_string_lossy().to_string();
-                            }
-                        }
-                        
-                        if ui.button("📄 文件").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                self.current_path_input = path.to_string_lossy().to_string();
-                            }
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                // 描述输入区域
-                ui.vertical(|ui| {
-                    ui.label("📄 描述 (可选):");
-                    ui.add_sized(
-                        [ui.available_width(), 48.0],
-                        egui::TextEdit::multiline(&mut self.current_description_input)
-                            .hint_text("为这个条目添加详细描述...")
-                    );
-                });
-
-                ui.add_space(8.0);
-
-                // 标签输入区域
-                ui.vertical(|ui| {
-                    ui.label("🏷️ 标签 (用逗号分隔):");
-                    ui.add_sized(
-                        [ui.available_width(), 24.0],
-                        egui::TextEdit::singleline(&mut self.current_tag_input)
-                            .hint_text("例如: 工作, 重要, 项目...")
-                    );
-                });
-
-                ui.add_space(8.0);
-
-                // 操作按钮区域
-                ui.horizontal(|ui| {
-                    let button_text = if self.selected_entry_index.is_some() {
-                        "🔄 更新条目"
-                    } else {
-                        "➕ 添加到列表"
-                    };
-
-                    let button_color = if self.selected_entry_index.is_some() {
-                        egui::Color32::from_rgb(70, 130, 180)  // 蓝色用于更新
-                    } else {
-                        egui::Color32::from_rgb(34, 139, 34)   // 绿色用于添加
-                    };
-
-                    ui.visuals_mut().widgets.inactive.bg_fill = button_color;
-                    ui.visuals_mut().widgets.hovered.bg_fill = button_color.gamma_multiply(1.2);
-                    ui.visuals_mut().widgets.active.bg_fill = button_color.gamma_multiply(0.8);
-
-                    let button = ui.add_sized([120.0, 32.0], egui::Button::new(button_text).wrap(false));
-                    
-                    if button.clicked() {
-                        let tags: Vec<String> = self
-                            .current_tag_input
-                            .split(',')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect();
-
-                        let path_input = self.current_path_input.clone();
-                        let name_input = self.current_name_input.clone();
-                        let description_input = if self.current_description_input.trim().is_empty() {
-                            None
+                        let title_text = if self.selected_entry_index.is_some() {
+                            "📝 编辑条目"
                         } else {
-                            Some(self.current_description_input.clone())
+                            "➕ 添加新条目"
                         };
                         
-                        if let Some(index) = self.selected_entry_index {
-                            self.update_entry(index, &path_input, &name_input, description_input, tags);
-                        } else {
-                            self.add_entry(&path_input, &name_input, description_input, tags);
-
-                            if self.error_message.is_none() {
-                                self.current_path_input.clear();
-                                self.current_name_input.clear();
-                                self.current_description_input.clear();
-                                self.current_tag_input.clear();
+                        ui.label(
+                            egui::RichText::new(title_text)
+                                .size(18.0)
+                                .color(egui::Color32::from_rgb(70, 130, 180))
+                                .strong()
+                        );
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if self.selected_entry_index.is_some() {
+                                let cancel_btn = egui::Button::new("❌ 取消编辑")
+                                    .fill(egui::Color32::from_rgb(255, 140, 0))
+                                    .rounding(egui::Rounding::same(6.0));
+                                if ui.add_sized([80.0, 24.0], cancel_btn).clicked() {
+                                    self.selected_entry_index = None;
+                                    self.current_path_input.clear();
+                                    self.current_name_input.clear();
+                                    self.current_description_input.clear();
+                                    self.current_tag_input.clear();
+                                }
                             }
-                        }
-                    }
+                        });
+                    });
 
-                    // 快捷键提示
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.colored_label(
-                            egui::Color32::GRAY, 
-                            "💡 提示: 可直接拖拽文件到窗口"
+                    ui.add_space(12.0);
+
+                    // 名称输入区域
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("📝 显示名称")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(80, 80, 80))
+                                .strong()
+                        );
+                        ui.add_space(4.0);
+                        ui.add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::TextEdit::singleline(&mut self.current_name_input)
+                                .hint_text("为这个条目起个好记的名字...")
+                                .font(egui::TextStyle::Body)
                         );
                     });
-                });
 
-                // 错误信息显示
-                if let Some(error) = &self.error_message.clone() {
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.colored_label(egui::Color32::RED, "❌ 错误:");
-                        ui.colored_label(egui::Color32::RED, error);
-                        if ui.small_button("✖").clicked() {
-                            self.error_message = None;
-                        }
+                    ui.add_space(12.0);
+
+                    // 路径输入区域
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("📍 文件/文件夹路径")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(80, 80, 80))
+                                .strong()
+                        );
+                        ui.add_space(4.0);
+                        
+                        ui.horizontal(|ui| {
+                            let _path_input = ui.add_sized(
+                                [ui.available_width() - 170.0, 32.0],
+                                egui::TextEdit::singleline(&mut self.current_path_input)
+                                    .hint_text("输入路径或使用浏览按钮选择...")
+                                    .font(egui::TextStyle::Body)
+                            );
+                            
+                            let folder_btn = egui::Button::new("📁 文件夹")
+                                .fill(egui::Color32::from_rgb(100, 149, 237))
+                                .rounding(egui::Rounding::same(6.0));
+                            if ui.add_sized([80.0, 32.0], folder_btn).clicked() {
+                                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                    self.current_path_input = path.to_string_lossy().to_string();
+                                }
+                            }
+                            
+                            let file_btn = egui::Button::new("📄 文件")
+                                .fill(egui::Color32::from_rgb(34, 139, 34))
+                                .rounding(egui::Rounding::same(6.0));
+                            if ui.add_sized([80.0, 32.0], file_btn).clicked() {
+                                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                    self.current_path_input = path.to_string_lossy().to_string();
+                                }
+                            }
+                        });
                     });
-                }
+
+                    ui.add_space(12.0);
+
+                    // 描述输入区域
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("📄 描述 (可选)")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(80, 80, 80))
+                                .strong()
+                        );
+                        ui.add_space(4.0);
+                        ui.add_sized(
+                            [ui.available_width(), 60.0],
+                            egui::TextEdit::multiline(&mut self.current_description_input)
+                                .hint_text("为这个条目添加详细描述...")
+                                .font(egui::TextStyle::Body)
+                        );
+                    });
+
+                    ui.add_space(12.0);
+
+                    // 标签输入区域
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("🏷️ 标签 (用逗号分隔)")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(80, 80, 80))
+                                .strong()
+                        );
+                        ui.add_space(4.0);
+                        ui.add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::TextEdit::singleline(&mut self.current_tag_input)
+                                .hint_text("例如: 工作, 重要, 项目...")
+                                .font(egui::TextStyle::Body)
+                        );
+                    });
+
+                    ui.add_space(16.0);
+
+                    // 操作按钮区域
+                    ui.vertical(|ui| {
+                        let button_text = if self.selected_entry_index.is_some() {
+                            "🔄 更新条目"
+                        } else {
+                            "➕ 添加到列表"
+                        };
+
+                        let button_color = if self.selected_entry_index.is_some() {
+                            egui::Color32::from_rgb(70, 130, 180)  // 蓝色用于更新
+                        } else {
+                            egui::Color32::from_rgb(34, 139, 34)   // 绿色用于添加
+                        };
+
+                        let main_btn = egui::Button::new(
+                            egui::RichText::new(button_text)
+                                .size(16.0)
+                                .color(egui::Color32::WHITE)
+                                .strong()
+                        )
+                        .fill(button_color)
+                        .rounding(egui::Rounding::same(8.0));
+                        
+                        if ui.add_sized([ui.available_width(), 40.0], main_btn).clicked() {
+                            let tags: Vec<String> = self
+                                .current_tag_input
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+
+                            let path_input = self.current_path_input.clone();
+                            let name_input = self.current_name_input.clone();
+                            let description_input = if self.current_description_input.trim().is_empty() {
+                                None
+                            } else {
+                                Some(self.current_description_input.clone())
+                            };
+                            
+                            if let Some(index) = self.selected_entry_index {
+                                self.update_entry(index, &path_input, &name_input, description_input, tags);
+                            } else {
+                                self.add_entry(&path_input, &name_input, description_input, tags);
+
+                                if self.error_message.is_none() {
+                                    self.current_path_input.clear();
+                                    self.current_name_input.clear();
+                                    self.current_description_input.clear();
+                                    self.current_tag_input.clear();
+                                }
+                            }
+                        }
+
+                        ui.add_space(8.0);
+
+                        // 快捷键提示
+                        ui.horizontal(|ui| {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(120, 120, 120),
+                                egui::RichText::new("💡 提示: 可直接拖拽文件到窗口快速添加")
+                                    .size(12.0)
+                            );
+                        });
+                    });
+
+                    // 错误信息显示
+                    if let Some(error) = &self.error_message.clone() {
+                        ui.add_space(12.0);
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgb(255, 245, 245))
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 99, 99)))
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(220, 53, 69),
+                                        egui::RichText::new("❌ 错误").strong()
+                                    );
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(185, 28, 28),
+                                        error
+                                    );
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let close_btn = egui::Button::new("✖")
+                                            .fill(egui::Color32::from_rgb(220, 53, 69))
+                                            .rounding(egui::Rounding::same(4.0));
+                                        if ui.add_sized([24.0, 20.0], close_btn).clicked() {
+                                            self.error_message = None;
+                                        }
+                                    });
+                                });
+                            });
+                    }
+                });
             });
-        });
     }
 
     fn setup_chinese_fonts(&mut self, ctx: &egui::Context) {
@@ -336,6 +421,18 @@ impl FileManagerApp {
         }
 
         ctx.set_fonts(fonts);
+        
+        // 设置UI风格以优化中文显示
+        let mut style = ctx.style().as_ref().clone();
+        style.text_styles = [
+            (egui::TextStyle::Small, egui::FontId::proportional(10.0)),
+            (egui::TextStyle::Body, egui::FontId::proportional(14.0)),
+            (egui::TextStyle::Monospace, egui::FontId::monospace(13.0)),
+            (egui::TextStyle::Button, egui::FontId::proportional(14.0)),
+            (egui::TextStyle::Heading, egui::FontId::proportional(18.0)),
+        ].into();
+        ctx.set_style(style);
+        
         self.font_loaded = true;
     }
 
@@ -429,17 +526,28 @@ impl FileManagerApp {
     }
 
     fn render_file_list(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.strong("📋 已保存的路径");
-            ui.separator();
-            ui.small(format!("共 {} 项", self.entries.len()));
-            if !self.search_query.is_empty() {
+        // 美化的头部区域
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.strong("📋 已保存的路径");
                 ui.separator();
-                ui.colored_label(egui::Color32::BLUE, format!("筛选: {}", self.search_query));
-            }
+                ui.colored_label(
+                    egui::Color32::from_rgb(100, 149, 237),
+                    format!("共 {} 项", self.entries.len())
+                );
+                if !self.search_query.is_empty() {
+                    ui.separator();
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 140, 0),
+                        format!("筛选: {}", self.search_query)
+                    );
+                }
+                ui.add_space(8.0);
+            });
         });
 
-        ui.separator();
+        ui.add_space(4.0);
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -475,81 +583,128 @@ impl FileManagerApp {
                         None
                     };
 
-                    ui.group(|ui| {
-                        if let Some(color) = bg_color {
-                            ui.visuals_mut().widgets.noninteractive.bg_fill = color;
-                        }
-                        
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                // 图标
-                                let icon = if entry_is_directory { "📁" } else { "📄" };
-                                ui.label(icon);
-
-                                // 显示名称（可点击）
-                                let response = ui.add(
-                                    egui::Label::new(&entry_name)
+                    // 使用更美观的卡片式设计
+                    egui::Frame::none()
+                        .fill(bg_color.unwrap_or(egui::Color32::from_rgb(248, 249, 250)))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 220, 220)))
+                        .rounding(egui::Rounding::same(8.0))
+                        .inner_margin(egui::Margin::same(12.0))
+                        .shadow(egui::epaint::Shadow {
+                            extrusion: 2.0,
+                            color: egui::Color32::from_black_alpha(20),
+                        })
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                // 主要信息行
+                                ui.horizontal(|ui| {
+                                    // 图标和名称
+                                    let icon = if entry_is_directory { "📁" } else { "📄" };
+                                    ui.label(egui::RichText::new(icon).size(20.0));
+                                    
+                                    ui.add_space(8.0);
+                                    
+                                    // 显示名称（可点击，确保中文居中对齐）
+                                    let name_response = ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&entry_name)
+                                                .size(16.0)
+                                                .color(egui::Color32::from_rgb(51, 51, 51))
+                                                .strong()
+                                                .family(egui::FontFamily::Proportional)
+                                        )
                                         .sense(egui::Sense::click())
-                                );
-                                
-                                if response.clicked() {
-                                    self.open_path(&entry_path);
-                                }
-                                
-                                if response.hovered() {
-                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                }
-
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.small_button("🗑️").clicked() {
-                                        to_remove = Some(index);
+                                        .wrap(false)
+                                    );
+                                    
+                                    if name_response.clicked() {
+                                        self.open_path(&entry_path);
+                                    }
+                                    
+                                    if name_response.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                                     }
 
-                                    if ui.small_button("📝").clicked() {
-                                        to_edit = Some(index);
-                                    }
+                                    // 操作按钮
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        // 美化的删除按钮
+                                        let delete_btn = egui::Button::new("🗑️")
+                                            .fill(egui::Color32::from_rgb(255, 99, 99))
+                                            .rounding(egui::Rounding::same(4.0));
+                                        if ui.add_sized([32.0, 24.0], delete_btn).clicked() {
+                                            to_remove = Some(index);
+                                        }
+
+                                        ui.add_space(4.0);
+
+                                        // 美化的编辑按钮
+                                        let edit_btn = egui::Button::new("📝")
+                                            .fill(egui::Color32::from_rgb(100, 149, 237))
+                                            .rounding(egui::Rounding::same(4.0));
+                                        if ui.add_sized([32.0, 24.0], edit_btn).clicked() {
+                                            to_edit = Some(index);
+                                        }
+                                    });
                                 });
-                            });
 
-                            // 路径行（小字显示）
-                            ui.horizontal(|ui| {
-                                ui.colored_label(
-                                    egui::Color32::GRAY,
-                                    format!("📍 {}", entry_path.to_string_lossy())
-                                );
-                            });
+                                ui.add_space(6.0);
 
-                            // 描述行
-                            if let Some(description) = &entry_description {
+                                // 路径行（小字显示）
                                 ui.horizontal(|ui| {
                                     ui.colored_label(
-                                        egui::Color32::DARK_GRAY,
-                                        format!("📄 {}", description)
+                                        egui::Color32::from_rgb(120, 120, 120),
+                                        egui::RichText::new(format!("📍 {}", entry_path.to_string_lossy()))
+                                            .size(12.0)
+                                            .family(egui::FontFamily::Proportional)
                                     );
                                 });
-                            }
 
-                            // 标签行
-                            if !entry_tags.is_empty() {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    for tag in &entry_tags {
-                                        if ui.small_button(format!("🏷️ {}", tag)).clicked() {
-                                            self.search_query = tag.clone();
+                                // 描述行
+                                if let Some(description) = &entry_description {
+                                    ui.add_space(2.0);
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(85, 85, 85),
+                                            egui::RichText::new(format!("📄 {}", description))
+                                                .size(13.0)
+                                                .family(egui::FontFamily::Proportional)
+                                        );
+                                    });
+                                }
+
+                                // 标签和时间行
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui| {
+                                    // 标签
+                                    if !entry_tags.is_empty() {
+                                        for tag in &entry_tags {
+                                            let tag_btn = egui::Button::new(
+                                                egui::RichText::new(format!("🏷️ {}", tag))
+                                                    .size(11.0)
+                                                    .family(egui::FontFamily::Proportional)
+                                            )
+                                            .fill(egui::Color32::from_rgb(230, 240, 255))
+                                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 149, 237)))
+                                            .rounding(egui::Rounding::same(12.0));
+                                            
+                                            if ui.add_sized([tag.len() as f32 * 8.0 + 30.0, 20.0], tag_btn).clicked() {
+                                                self.search_query = tag.clone();
+                                            }
+                                            ui.add_space(4.0);
                                         }
                                     }
-                                });
-                            }
 
-                            // 添加时间
-                            ui.horizontal(|ui| {
-                                ui.colored_label(
-                                    egui::Color32::GRAY,
-                                    format!("📅 {}", entry_created_at.format("%Y-%m-%d %H:%M"))
-                                );
+                                    // 时间在右侧
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.colored_label(
+                                            egui::Color32::from_rgb(140, 140, 140),
+                                            egui::RichText::new(format!("📅 {}", entry_created_at.format("%Y-%m-%d %H:%M")))
+                                                .size(11.0)
+                                                .family(egui::FontFamily::Proportional)
+                                        );
+                                    });
+                                });
                             });
                         });
-                    });
                     
                     ui.add_space(4.0);
                 }
@@ -569,10 +724,38 @@ impl FileManagerApp {
                 }
 
                 if filtered_indices.is_empty() && !self.entries.is_empty() {
-                    ui.label("没有找到匹配的结果");
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(40.0);
+                        ui.label(egui::RichText::new("🔍").size(48.0));
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("没有找到匹配的结果")
+                                .size(16.0)
+                                .color(egui::Color32::from_rgb(120, 120, 120))
+                                .family(egui::FontFamily::Proportional)
+                        );
+                        ui.add_space(40.0);
+                    });
                 } else if self.entries.is_empty() {
-                    ui.label("还没有添加任何文件或文件夹");
-                    ui.label("💡 提示: 可以拖拽文件/文件夹到此窗口快速添加");
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(60.0);
+                        ui.label(egui::RichText::new("📁").size(64.0));
+                        ui.add_space(16.0);
+                        ui.label(
+                            egui::RichText::new("还没有添加任何文件或文件夹")
+                                .size(18.0)
+                                .color(egui::Color32::from_rgb(100, 100, 100))
+                                .family(egui::FontFamily::Proportional)
+                        );
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new("💡 提示: 可以拖拽文件/文件夹到此窗口快速添加")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(150, 150, 150))
+                                .family(egui::FontFamily::Proportional)
+                        );
+                        ui.add_space(60.0);
+                    });
                 }
             });
     }
@@ -584,6 +767,21 @@ impl eframe::App for FileManagerApp {
         if !self.font_loaded {
             self.setup_chinese_fonts(ctx);
         }
+        
+        // 设置全局UI样式以改善中文显示
+        let mut style = ctx.style().as_ref().clone();
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(8.0, 6.0);
+        style.spacing.menu_margin = egui::style::Margin::same(8.0);
+        style.spacing.indent = 18.0;
+        
+        style.visuals.widgets.noninteractive.rounding = egui::Rounding::same(4.0);
+        style.visuals.widgets.inactive.rounding = egui::Rounding::same(6.0);
+        style.visuals.widgets.hovered.rounding = egui::Rounding::same(6.0);
+        style.visuals.widgets.active.rounding = egui::Rounding::same(6.0);
+        style.visuals.widgets.open.rounding = egui::Rounding::same(6.0);
+        
+        ctx.set_style(style);
         // 处理拖拽文件
         ctx.input(|i| {
             if !i.raw.dropped_files.is_empty() {
@@ -595,36 +793,67 @@ impl eframe::App for FileManagerApp {
             }
         });
 
-        // 顶部工具栏
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("🗂️ 文件快速访问器");
-                
-                // 侧边栏切换按钮
-                ui.separator();
-                let toggle_text = if self.sidebar_expanded { "◀ 收起" } else { "▶ 展开" };
-                if ui.button(toggle_text).clicked() {
-                    self.sidebar_expanded = !self.sidebar_expanded;
-                }
-                
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.colored_label(egui::Color32::GRAY, "v1.0 - 高性能版本");
+        // 美化的顶部工具栏
+        egui::TopBottomPanel::top("top_panel")
+            .frame(egui::Frame::none()
+                .fill(egui::Color32::from_rgb(45, 55, 75))
+                .inner_margin(egui::Margin::symmetric(16.0, 12.0)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("🗂️ 文件快速访问器")
+                            .size(20.0)
+                            .color(egui::Color32::WHITE)
+                            .strong()
+                    );
+                    
+                    ui.add_space(16.0);
+                    
+                    // 美化的侧边栏切换按钮
+                    let toggle_text = if self.sidebar_expanded { "◀ 收起面板" } else { "▶ 展开面板" };
+                    let toggle_btn = egui::Button::new(
+                        egui::RichText::new(toggle_text)
+                            .color(egui::Color32::WHITE)
+                    )
+                    .fill(egui::Color32::from_rgb(70, 130, 180))
+                    .rounding(egui::Rounding::same(6.0));
+                    
+                    if ui.add_sized([100.0, 28.0], toggle_btn).clicked() {
+                        self.sidebar_expanded = !self.sidebar_expanded;
+                    }
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(200, 200, 200),
+                            egui::RichText::new("v1.0 - 高性能版本").size(12.0)
+                        );
+                    });
                 });
             });
-        });
 
-        // 底部状态栏
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.small(format!(
-                    "配置文件: {}",
-                    self.config_manager.get_config_path().display()
-                ));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.small("💡 支持拖拽文件到窗口");
+        // 美化的底部状态栏
+        egui::TopBottomPanel::bottom("bottom_panel")
+            .frame(egui::Frame::none()
+                .fill(egui::Color32::from_rgb(248, 249, 250))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 220, 220)))
+                .inner_margin(egui::Margin::symmetric(16.0, 8.0)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(100, 100, 100),
+                        egui::RichText::new(format!(
+                            "📄 配置文件: {}",
+                            self.config_manager.get_config_path().display()
+                        )).size(11.0)
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(100, 149, 237),
+                            egui::RichText::new("💡 支持拖拽文件到窗口").size(11.0)
+                        );
+                    });
                 });
             });
-        });
 
         // 右侧边栏（添加面板）
         if self.sidebar_expanded {
@@ -640,27 +869,42 @@ impl eframe::App for FileManagerApp {
 
         // 主内容区域
         egui::CentralPanel::default().show(ctx, |ui| {
-            // 搜索区域
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.strong("🔍 快速搜索");
-                    ui.separator();
-                    let search_response = ui.add_sized(
-                        [ui.available_width() - 80.0, 24.0],
-                        egui::TextEdit::singleline(&mut self.search_query)
-                            .hint_text("搜索名称、路径、描述、标签...")
-                    );
-                    
-                    if search_response.changed() {
-                        // 搜索时自动去除错误消息
-                        self.error_message = None;
-                    }
-                    
-                    if ui.small_button("🗑️ 清空").clicked() {
-                        self.search_query.clear();
-                    }
+            // 美化的搜索区域
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgb(250, 251, 252))
+                .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 149, 237)))
+                .rounding(egui::Rounding::same(10.0))
+                .inner_margin(egui::Margin::same(12.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("🔍 快速搜索")
+                                .size(16.0)
+                                .color(egui::Color32::from_rgb(70, 130, 180))
+                                .strong()
+                        );
+                        ui.separator();
+                        
+                        let search_response = ui.add_sized(
+                            [ui.available_width() - 90.0, 28.0],
+                            egui::TextEdit::singleline(&mut self.search_query)
+                                .hint_text("搜索名称、路径、描述、标签...")
+                                .font(egui::TextStyle::Body)
+                        );
+                        
+                        if search_response.changed() {
+                            // 搜索时自动去除错误消息
+                            self.error_message = None;
+                        }
+                        
+                        let clear_btn = egui::Button::new("🗑️ 清空")
+                            .fill(egui::Color32::from_rgb(255, 140, 0))
+                            .rounding(egui::Rounding::same(6.0));
+                        if ui.add_sized([70.0, 28.0], clear_btn).clicked() {
+                            self.search_query.clear();
+                        }
+                    });
                 });
-            });
 
             ui.add_space(8.0);
 
