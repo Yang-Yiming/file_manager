@@ -32,6 +32,7 @@ pub struct FileManagerApp {
     // 添加功能
     add_path_input: String,
     add_name_input: String,
+    add_nickname_input: String,
     add_tags_input: String,
     add_description_input: String,
     show_add_dialog: bool,
@@ -121,6 +122,7 @@ impl FileManagerApp {
             last_filter_time: Instant::now(),
             add_path_input: String::new(),
             add_name_input: String::new(),
+            add_nickname_input: String::new(),
             add_tags_input: String::new(),
             add_description_input: String::new(),
             show_add_dialog: false,
@@ -344,7 +346,13 @@ impl FileManagerApp {
             Some(self.add_description_input.clone())
         };
         
-        let entry = FileEntry::new(path, name, description, tags.clone(), is_directory);
+        let nickname = if self.add_nickname_input.is_empty() {
+            None
+        } else {
+            Some(self.add_nickname_input.clone())
+        };
+        
+        let entry = FileEntry::new_with_nickname(path, name, nickname, description, tags.clone(), is_directory);
         
         // 更新标签集合
         for tag in &tags {
@@ -357,6 +365,7 @@ impl FileManagerApp {
         // 清空输入
         self.add_path_input.clear();
         self.add_name_input.clear();
+        self.add_nickname_input.clear();
         self.add_tags_input.clear();
         self.add_description_input.clear();
         self.show_add_dialog = false;
@@ -414,6 +423,7 @@ impl FileManagerApp {
             self.editing_entry_index = Some(index);
             let entry = &self.entries[index];
             self.add_tags_input = entry.tags.join(" ");
+            self.add_nickname_input = entry.nickname.clone().unwrap_or_default();
             self.add_description_input = entry.description.clone().unwrap_or_default();
             self.show_tag_editor = true;
         }
@@ -423,6 +433,11 @@ impl FileManagerApp {
         if let Some(index) = self.editing_entry_index {
             if index < self.entries.len() {
                 let new_tags = FileEntry::parse_tags(&self.add_tags_input);
+                let new_nickname = if self.add_nickname_input.is_empty() {
+                    None
+                } else {
+                    Some(self.add_nickname_input.clone())
+                };
                 let new_description = if self.add_description_input.is_empty() {
                     None
                 } else {
@@ -431,6 +446,7 @@ impl FileManagerApp {
                 
                 // 更新条目
                 self.entries[index].tags = new_tags.clone();
+                self.entries[index].nickname = new_nickname;
                 self.entries[index].description = new_description;
                 
                 // 重建标签集合
@@ -848,6 +864,11 @@ impl FileManagerApp {
         ui.text_edit_singleline(&mut self.add_name_input);
 
         ui.add_space(8.0);
+        ui.label("昵称 (可选):");
+        ui.text_edit_singleline(&mut self.add_nickname_input);
+        ui.small("昵称支持拼音搜索，例如：文件夹\"我是谁\"可以通过\"woshi\"搜索到");
+
+        ui.add_space(8.0);
         ui.label("标签 (使用 # 前缀):");
         if ui.text_edit_singleline(&mut self.add_tags_input).changed() {
             self.show_tag_suggestions = !self.add_tags_input.is_empty();
@@ -871,6 +892,7 @@ impl FileManagerApp {
                 self.show_add_dialog = false;
                 self.add_path_input.clear();
                 self.add_name_input.clear();
+                self.add_nickname_input.clear();
                 self.add_tags_input.clear();
                 self.add_description_input.clear();
             }
@@ -889,6 +911,11 @@ impl FileManagerApp {
             }
         }
 
+        ui.label("昵称 (可选):");
+        ui.text_edit_singleline(&mut self.add_nickname_input);
+        ui.small("昵称支持拼音搜索，例如：文件夹\"我是谁\"可以通过\"woshi\"搜索到");
+
+        ui.add_space(8.0);
         ui.label("标签 (使用 # 前缀):");
         ui.text_edit_singleline(&mut self.add_tags_input);
         ui.small("示例: #重要 #工作 #项目 学习");
@@ -906,6 +933,7 @@ impl FileManagerApp {
                 self.show_tag_editor = false;
                 self.editing_entry_index = None;
                 self.add_tags_input.clear();
+                self.add_nickname_input.clear();
                 self.add_description_input.clear();
             }
         });
@@ -941,6 +969,7 @@ impl FileManagerApp {
                     let entry = &self.entries[index];
                     let entry_path = entry.path.clone();
                     let entry_name = entry.name.clone();
+                    let entry_nickname = entry.nickname.clone();
                     let (hash_tags, _path_tags) = entry.get_tag_categories();
                     let entry_is_directory = entry.is_directory;
                     let entry_description = entry.description.clone();
@@ -951,10 +980,22 @@ impl FileManagerApp {
                             let icon = if entry_is_directory { "📁" } else { "📄" };
                             ui.label(icon);
                             
-                            // 文件名（可点击打开）
-                            if ui.link(&entry_name).clicked() {
-                                self.open_path(&entry_path);
-                            }
+                            // 优化显示：昵称优先，文件名在后
+                            ui.horizontal(|ui| {
+                                if let Some(nickname) = &entry_nickname {
+                                    // 昵称作为主要显示（可点击打开）
+                                    if ui.link(nickname.as_str()).clicked() {
+                                        self.open_path(&entry_path);
+                                    }
+                                    // 真实文件名用淡灰色显示在后面
+                                    ui.small(egui::RichText::new(format!("({})", entry_name)).color(egui::Color32::GRAY));
+                                } else {
+                                    // 没有昵称时直接显示文件名
+                                    if ui.link(&entry_name).clicked() {
+                                        self.open_path(&entry_path);
+                                    }
+                                }
+                            });
                             
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.small_button("删除").clicked() {
