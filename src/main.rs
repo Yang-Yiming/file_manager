@@ -92,7 +92,7 @@ fn check_config_access() -> Result<(), String> {
     let config_manager = config::ConfigManager::new();
     
     // 尝试创建一个临时配置以测试写入权限
-    let test_config = config::Config::default();
+    let test_config = config::AppConfig::default();
     config_manager.save_config(&test_config)
         .map_err(|e| format!("无法访问配置目录: {}", e))?;
     

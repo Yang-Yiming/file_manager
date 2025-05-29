@@ -1,4 +1,4 @@
-use crate::config::{Config, ConfigManager};
+use crate::config::{AppConfig, ConfigManager, DataManager, UserData};
 use crate::file_entry::FileEntry;
 use eframe::egui;
 use std::collections::HashSet;
@@ -16,7 +16,9 @@ pub struct FileManagerApp {
     entries: Vec<FileEntry>,
     search_query: String,
     config_manager: ConfigManager,
-    config: Config,
+    data_manager: DataManager,
+    config: AppConfig,
+    user_data: UserData,
     font_loaded: bool,
     show_settings: bool,
     all_tags: HashSet<String>,
@@ -39,8 +41,9 @@ pub struct FileManagerApp {
     editing_entry_index: Option<usize>,
     tag_filter: String,
     
-    // 配置路径管理
+    // 路径管理
     custom_config_path: String,
+    custom_data_path: String,
 }
 
 impl Default for FileManagerApp {
@@ -54,24 +57,24 @@ impl FileManagerApp {
         let config_manager = ConfigManager::new();
         let config = config_manager.load_config().unwrap_or_default();
         
-        // 检查是否有自定义路径，如果有则使用它
-        let custom_config_path = config.config_path.clone().unwrap_or_default();
-        
-        // 如果有自定义路径且路径有效，则切换到自定义路径
-        let (final_config_manager, final_config, final_custom_path) = if !custom_config_path.is_empty() {
-            let custom_path_buf = PathBuf::from(&custom_config_path);
-            if custom_path_buf.exists() || custom_path_buf.parent().map_or(false, |p| p.exists()) {
-                let custom_manager = ConfigManager::new_with_path(custom_path_buf);
-                let custom_config = custom_manager.load_config().unwrap_or_default();
-                (custom_manager, custom_config, custom_config_path)
+        // 创建数据管理器
+        let data_manager = if let Some(data_path) = &config.data_file_path {
+            if !data_path.is_empty() {
+                let data_path_buf = PathBuf::from(data_path);
+                if data_path_buf.exists() || data_path_buf.parent().map_or(false, |p| p.exists()) {
+                    DataManager::new_with_path(data_path_buf)
+                } else {
+                    DataManager::new()
+                }
             } else {
-                (config_manager, config, String::new())
+                DataManager::new()
             }
         } else {
-            (config_manager, config, String::new())
+            DataManager::new()
         };
         
-        let entries = final_config.entries.clone();
+        let user_data = data_manager.load_data().unwrap_or_default();
+        let entries = user_data.entries.clone();
 
         let mut all_tags = HashSet::new();
         for entry in &entries {
@@ -81,16 +84,25 @@ impl FileManagerApp {
         }
 
         let filtered_indices: Vec<usize> = (0..entries.len()).collect();
+        
+        // 从配置中恢复主题模式
+        let theme_mode = match config.theme_mode.as_str() {
+            "Dark" => ThemeMode::Dark,
+            "System" => ThemeMode::System,
+            _ => ThemeMode::Light,
+        };
 
         Self {
             entries,
             search_query: String::new(),
-            config_manager: final_config_manager,
-            config: final_config,
+            config_manager,
+            data_manager,
+            config: config.clone(),
+            user_data,
             font_loaded: false,
             show_settings: false,
             all_tags,
-            theme_mode: ThemeMode::Light, // 默认使用Light主题
+            theme_mode,
             filtered_indices,
             last_search_query: String::new(),
             last_filter_time: Instant::now(),
@@ -102,7 +114,8 @@ impl FileManagerApp {
             show_tag_editor: false,
             editing_entry_index: None,
             tag_filter: String::new(),
-            custom_config_path: final_custom_path,
+            custom_config_path: String::new(),
+            custom_data_path: config.data_file_path.clone().unwrap_or_default(),
         }
     }
 
@@ -223,6 +236,22 @@ impl FileManagerApp {
         }
     }
 
+    fn force_update_filter(&mut self) {
+        // 强制重新过滤，不管搜索查询是否改变
+        self.filtered_indices = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                entry.matches_query(&self.search_query) && self.matches_tag_filter(entry)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        
+        self.last_search_query = self.search_query.clone();
+        self.last_filter_time = Instant::now();
+    }
+
     fn matches_tag_filter(&self, entry: &FileEntry) -> bool {
         if self.tag_filter.is_empty() {
             return true;
@@ -239,12 +268,19 @@ impl FileManagerApp {
         return hash_tags.iter().any(|tag| tag.to_lowercase().contains(&self.tag_filter.to_lowercase()));
     }
 
-    fn save_config(&mut self) {
-        self.config.entries = self.entries.clone();
-        if let Err(_e) = self.config_manager.save_config(&self.config) {
-            #[cfg(debug_assertions)]
-            eprintln!("保存配置失败: {}", _e);
-        }
+    fn save_config(&mut self) -> Result<(), String> {
+        // 保存主题设置到配置
+        self.config.theme_mode = match self.theme_mode {
+            ThemeMode::Light => "Light".to_string(),
+            ThemeMode::Dark => "Dark".to_string(),
+            ThemeMode::System => "System".to_string(),
+        };
+        self.config_manager.save_config(&self.config)
+    }
+
+    fn save_user_data(&mut self) -> Result<(), String> {
+        self.user_data.entries = self.entries.clone();
+        self.data_manager.save_data(&self.user_data)
     }
 
     fn add_entry(&mut self) {
@@ -278,7 +314,7 @@ impl FileManagerApp {
         }
         
         self.entries.push(entry);
-        self.save_config();
+        let _ = self.save_user_data();
         
         // 清空输入
         self.add_path_input.clear();
@@ -288,8 +324,7 @@ impl FileManagerApp {
         self.show_add_dialog = false;
         
         // 强制重新过滤并更新索引
-        self.last_search_query.clear();
-        self.update_filter();
+        self.force_update_filter();
     }
 
     fn remove_entry(&mut self, index: usize) {
@@ -299,9 +334,8 @@ impl FileManagerApp {
             // 更新标签集合，移除不再使用的标签
             self.rebuild_tag_set();
             
-            self.save_config();
-            self.last_search_query.clear(); // 强制重新过滤
-            self.update_filter(); // 立即更新过滤结果
+            let _ = self.save_user_data();
+            self.force_update_filter();
         }
     }
 
@@ -367,9 +401,8 @@ impl FileManagerApp {
                     self.all_tags.insert(tag.clone());
                 }
                 
-                self.save_config();
-                self.last_search_query.clear(); // 强制重新过滤
-                self.update_filter(); // 立即更新过滤结果
+                let _ = self.save_user_data();
+                self.force_update_filter();
             }
         }
         
@@ -565,9 +598,15 @@ impl FileManagerApp {
 
         ui.label("主题:");
         ui.horizontal(|ui| {
+            let old_theme = self.theme_mode;
             ui.selectable_value(&mut self.theme_mode, ThemeMode::Light, "浅色");
             ui.selectable_value(&mut self.theme_mode, ThemeMode::Dark, "深色");
             ui.selectable_value(&mut self.theme_mode, ThemeMode::System, "系统");
+            
+            // 如果主题改变，保存配置
+            if self.theme_mode != old_theme {
+                let _ = self.save_config();
+            }
         });
 
         ui.add_space(16.0);
@@ -575,38 +614,100 @@ impl FileManagerApp {
         ui.label(format!("标签数量: {}", self.all_tags.len()));
 
         ui.add_space(16.0);
-        ui.label("配置文件:");
-        ui.label(format!("当前位置: {}", self.config_manager.get_config_path().display()));
-        
-        ui.horizontal(|ui| {
-            ui.label("自定义路径:");
-            ui.text_edit_singleline(&mut self.custom_config_path);
-        });
-        
-        ui.horizontal(|ui| {
-            if ui.button("选择位置").clicked() {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("JSON文件", &["json"])
-                    .set_file_name("file_manager_config.json")
-                    .save_file()
-                {
-                    self.custom_config_path = path.to_string_lossy().to_string();
+        ui.collapsing("应用配置文件", |ui| {
+            ui.label("配置文件格式: JSON");
+            ui.label(format!("当前位置: {}", self.config_manager.get_config_path().display()));
+            
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label("自定义配置路径:");
+                ui.text_edit_singleline(&mut self.custom_config_path);
+            });
+            
+            ui.horizontal(|ui| {
+                if ui.button("📁 选择位置").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("JSON文件", &["json"])
+                        .set_file_name("file_manager_config.json")
+                        .save_file()
+                    {
+                        self.custom_config_path = path.to_string_lossy().to_string();
+                    }
                 }
-            }
+                
+                if ui.button("✅ 应用配置路径").clicked() && !self.custom_config_path.is_empty() {
+                    let new_path = PathBuf::from(&self.custom_config_path);
+                    self.config_manager = ConfigManager::new_with_path(new_path);
+                    if let Err(e) = self.save_config() {
+                        ui.label(format!("❌ 保存配置失败: {}", e));
+                    } else {
+                        ui.label("✅ 配置路径已更新");
+                    }
+                }
+                
+                if ui.button("🔄 重置配置路径").clicked() {
+                    self.config_manager = ConfigManager::new();
+                    self.custom_config_path.clear();
+                    let _ = self.save_config();
+                }
+            });
+        });
+
+        ui.add_space(8.0);
+        ui.collapsing("用户数据文件", |ui| {
+            ui.label("数据文件格式: JSON");
+            ui.label(format!("当前位置: {}", self.data_manager.get_data_path().display()));
             
-            if ui.button("应用路径").clicked() && !self.custom_config_path.is_empty() {
-                let new_path = PathBuf::from(&self.custom_config_path);
-                self.config_manager.set_config_path(new_path);
-                self.config.config_path = Some(self.custom_config_path.clone());
-                self.save_config();
-            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label("自定义数据路径:");
+                ui.text_edit_singleline(&mut self.custom_data_path);
+            });
             
-            if ui.button("重置为默认").clicked() {
-                self.config_manager = ConfigManager::new();
-                self.custom_config_path.clear();
-                self.config.config_path = None;
-                self.save_config();
-            }
+            ui.horizontal(|ui| {
+                if ui.button("📁 选择位置").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("JSON文件", &["json"])
+                        .set_file_name("file_manager_data.json")
+                        .save_file()
+                    {
+                        self.custom_data_path = path.to_string_lossy().to_string();
+                    }
+                }
+                
+                if ui.button("✅ 应用数据路径").clicked() && !self.custom_data_path.is_empty() {
+                    let new_path = PathBuf::from(&self.custom_data_path);
+                    
+                    // 先保存当前数据到新位置
+                    let old_manager = std::mem::replace(&mut self.data_manager, DataManager::new_with_path(new_path));
+                    self.config.data_file_path = Some(self.custom_data_path.clone());
+                    
+                    if let Err(e) = self.save_user_data() {
+                        // 如果保存失败，恢复原来的数据管理器
+                        self.data_manager = old_manager;
+                        self.config.data_file_path = None;
+                        ui.label(format!("❌ 保存数据失败: {}", e));
+                    } else {
+                        // 保存配置中的数据路径
+                        let _ = self.save_config();
+                        ui.label("✅ 数据路径已更新");
+                    }
+                }
+                
+                if ui.button("🔄 重置数据路径").clicked() {
+                    self.data_manager = DataManager::new();
+                    self.custom_data_path.clear();
+                    self.config.data_file_path = None;
+                    let _ = self.save_config();
+                    let _ = self.save_user_data();
+                }
+            });
+            
+            ui.add_space(8.0);
+            ui.label("💡 提示:");
+            ui.label("• 用户数据(文件列表)与应用配置分开保存");
+            ui.label("• 数据以JSON格式保存，便于备份和迁移");
+            ui.label("• 重新打开应用后数据会自动恢复");
         });
 
         ui.add_space(8.0);
@@ -630,11 +731,12 @@ impl FileManagerApp {
             });
 
         ui.add_space(16.0);
-        if ui.button("清空所有数据").clicked() {
+        ui.add_space(16.0);
+        if ui.button("清空所有用户数据").clicked() {
             self.entries.clear();
             self.all_tags.clear();
-            self.save_config();
-            self.last_search_query.clear();
+            let _ = self.save_user_data();
+            self.force_update_filter();
         }
     }
 }
@@ -661,11 +763,10 @@ impl eframe::App for FileManagerApp {
                     
                     let entry = FileEntry::new(path_buf, name, None, Vec::new(), is_directory);
                     self.entries.push(entry);
-                    self.save_config();
+                    let _ = self.save_user_data();
                     
                     // 强制重新过滤并更新索引
-                    self.last_search_query.clear();
-                    self.update_filter();
+                    self.force_update_filter();
                 }
             }
         });
