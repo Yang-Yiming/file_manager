@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod config;
 mod file_entry;
@@ -28,7 +30,7 @@ fn main() -> Result<(), eframe::Error> {
     };
 
     eframe::run_native(
-        "🗂️ 文件快速访问器 - 高性能版本",
+        "文件快速访问器",
         options,
         Box::new(|cc| {
             // 设置更好的渲染选项

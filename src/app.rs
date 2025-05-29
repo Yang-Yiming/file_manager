@@ -1448,7 +1448,7 @@ impl eframe::App for FileManagerApp {
             }
         });
 
-        let (bg_color, card_color, text_color, secondary_color) = self.get_theme_colors();
+        let (bg_color, _card_color, _text_color, _secondary_color) = self.get_theme_colors();
 
         // 顶部工具栏
         egui::TopBottomPanel::top("top_panel")
