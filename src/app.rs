@@ -44,6 +44,19 @@ pub struct FileManagerApp {
     // 路径管理
     custom_config_path: String,
     custom_data_path: String,
+    
+    // 导入导出功能
+    show_import_export: bool,
+    import_merge_mode: bool,
+    export_status: String,
+    import_status: String,
+    
+    // 增强的标签管理
+    show_tag_manager: bool,
+    tag_cloud_filter: String,
+    selected_tags: HashSet<String>,
+    batch_tag_input: String,
+    show_tag_suggestions: bool,
 }
 
 impl Default for FileManagerApp {
@@ -116,6 +129,19 @@ impl FileManagerApp {
             tag_filter: String::new(),
             custom_config_path: String::new(),
             custom_data_path: config.data_file_path.clone().unwrap_or_default(),
+            
+            // 导入导出功能
+            show_import_export: false,
+            import_merge_mode: true,
+            export_status: String::new(),
+            import_status: String::new(),
+            
+            // 增强的标签管理
+            show_tag_manager: false,
+            tag_cloud_filter: String::new(),
+            selected_tags: HashSet::new(),
+            batch_tag_input: String::new(),
+            show_tag_suggestions: false,
         }
     }
 
@@ -259,13 +285,25 @@ impl FileManagerApp {
         
         let (hash_tags, _path_tags) = entry.get_tag_categories();
         
-        // 只检查hash标签
-        if self.tag_filter.starts_with('#') {
-            return hash_tags.iter().any(|tag| tag.contains(&self.tag_filter));
+        // 支持多标签过滤，用空格分隔
+        let filter_tags: Vec<&str> = self.tag_filter.split_whitespace().collect();
+        
+        for filter_tag in filter_tags {
+            let found = if filter_tag.starts_with('#') {
+                // 检查hash标签
+                hash_tags.iter().any(|tag| tag.contains(filter_tag))
+            } else {
+                // 如果没有#前缀，也在hash标签中搜索
+                hash_tags.iter().any(|tag| tag.to_lowercase().contains(&filter_tag.to_lowercase()))
+            };
+            
+            // 如果任何一个标签没有匹配，则不显示该条目
+            if !found {
+                return false;
+            }
         }
         
-        // 如果没有#前缀，也在hash标签中搜索
-        return hash_tags.iter().any(|tag| tag.to_lowercase().contains(&self.tag_filter.to_lowercase()));
+        true
     }
 
     fn save_config(&mut self) -> Result<(), String> {
@@ -413,6 +451,377 @@ impl FileManagerApp {
         self.add_description_input.clear();
     }
 
+    fn export_data(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON文件", &["json"])
+            .set_file_name("file_manager_export.json")
+            .save_file()
+        {
+            let export_data = UserData {
+                entries: self.entries.clone(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            
+            match serde_json::to_string_pretty(&export_data) {
+                Ok(json) => {
+                    match std::fs::write(&path, json) {
+                        Ok(_) => {
+                            self.export_status = format!("✅ 导出成功: {}", path.display());
+                        }
+                        Err(e) => {
+                            self.export_status = format!("❌ 导出失败: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.export_status = format!("❌ 序列化失败: {}", e);
+                }
+            }
+        }
+    }
+
+    fn import_data(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON文件", &["json"])
+            .pick_file()
+        {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    match serde_json::from_str::<UserData>(&content) {
+                        Ok(import_data) => {
+                            let import_count = import_data.entries.len();
+                            
+                            if self.import_merge_mode {
+                                // 合并模式：添加到现有数据
+                                for entry in import_data.entries {
+                                    // 检查是否已存在相同路径的条目
+                                    if !self.entries.iter().any(|e| e.path == entry.path) {
+                                        // 更新标签集合
+                                        for tag in &entry.tags {
+                                            self.all_tags.insert(tag.clone());
+                                        }
+                                        self.entries.push(entry);
+                                    }
+                                }
+                                self.import_status = format!("✅ 合并导入成功: {} 个条目", import_count);
+                            } else {
+                                // 替换模式：替换所有数据
+                                self.entries = import_data.entries;
+                                self.rebuild_tag_set();
+                                self.import_status = format!("✅ 替换导入成功: {} 个条目", import_count);
+                            }
+                            
+                            let _ = self.save_user_data();
+                            self.force_update_filter();
+                        }
+                        Err(e) => {
+                            // 尝试兼容旧格式
+                            if let Ok(entries) = serde_json::from_str::<Vec<FileEntry>>(&content) {
+                                let import_count = entries.len();
+                                
+                                if self.import_merge_mode {
+                                    for entry in entries {
+                                        if !self.entries.iter().any(|e| e.path == entry.path) {
+                                            for tag in &entry.tags {
+                                                self.all_tags.insert(tag.clone());
+                                            }
+                                            self.entries.push(entry);
+                                        }
+                                    }
+                                    self.import_status = format!("✅ 合并导入成功(旧格式): {} 个条目", import_count);
+                                } else {
+                                    self.entries = entries;
+                                    self.rebuild_tag_set();
+                                    self.import_status = format!("✅ 替换导入成功(旧格式): {} 个条目", import_count);
+                                }
+                                
+                                let _ = self.save_user_data();
+                                self.force_update_filter();
+                            } else {
+                                self.import_status = format!("❌ 文件格式错误: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.import_status = format!("❌ 读取文件失败: {}", e);
+                }
+            }
+        }
+    }
+
+    fn batch_add_tags(&mut self, tag_text: &str) {
+        let new_tags = FileEntry::parse_tags(tag_text);
+        if new_tags.is_empty() {
+            return;
+        }
+
+        let mut modified_count = 0;
+        for i in &self.filtered_indices {
+            if let Some(entry) = self.entries.get_mut(*i) {
+                let mut entry_modified = false;
+                for tag in &new_tags {
+                    if !entry.tags.contains(tag) {
+                        entry.tags.push(tag.clone());
+                        self.all_tags.insert(tag.clone());
+                        entry_modified = true;
+                    }
+                }
+                if entry_modified {
+                    entry.tags.sort();
+                    entry.tags.dedup();
+                    modified_count += 1;
+                }
+            }
+        }
+
+        if modified_count > 0 {
+            let _ = self.save_user_data();
+            self.force_update_filter();
+        }
+    }
+
+    fn batch_remove_tags(&mut self, tag_text: &str) {
+        let remove_tags = FileEntry::parse_tags(tag_text);
+        if remove_tags.is_empty() {
+            return;
+        }
+
+        let mut modified_count = 0;
+        for i in &self.filtered_indices {
+            if let Some(entry) = self.entries.get_mut(*i) {
+                let original_len = entry.tags.len();
+                entry.tags.retain(|tag| !remove_tags.contains(tag));
+                if entry.tags.len() != original_len {
+                    modified_count += 1;
+                }
+            }
+        }
+
+        if modified_count > 0 {
+            self.rebuild_tag_set();
+            let _ = self.save_user_data();
+            self.force_update_filter();
+        }
+    }
+
+    fn get_tag_usage_stats(&self) -> Vec<(String, usize)> {
+        let mut tag_counts = std::collections::HashMap::new();
+        
+        for entry in &self.entries {
+            for tag in &entry.tags {
+                *tag_counts.entry(tag.clone()).or_insert(0) += 1;
+            }
+        }
+        
+        let mut stats: Vec<(String, usize)> = tag_counts.into_iter().collect();
+        stats.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        stats
+    }
+
+    fn render_tag_suggestions(&mut self, ui: &mut egui::Ui, input_text: &str) {
+        if input_text.is_empty() {
+            return;
+        }
+
+        let input_lower = input_text.to_lowercase();
+        let matching_tags: Vec<String> = self.all_tags
+            .iter()
+            .filter(|tag| tag.to_lowercase().contains(&input_lower) && !input_text.contains(*tag))
+            .cloned()
+            .collect();
+
+        if !matching_tags.is_empty() {
+            ui.label("💡 标签建议:");
+            ui.horizontal_wrapped(|ui| {
+                for tag in matching_tags.iter().take(8) {
+                    if ui.small_button(tag).clicked() {
+                        if !self.add_tags_input.contains(tag) {
+                            if self.add_tags_input.is_empty() {
+                                self.add_tags_input = tag.clone();
+                            } else {
+                                self.add_tags_input = format!("{} {}", self.add_tags_input, tag);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    fn render_import_export(&mut self, ui: &mut egui::Ui) {
+        ui.heading("数据导入导出");
+        ui.separator();
+
+        ui.collapsing("导出数据", |ui| {
+            ui.label("将当前所有文件条目导出为JSON文件");
+            ui.add_space(8.0);
+            
+            if ui.button("📤 导出数据").clicked() {
+                self.export_data();
+            }
+            
+            if !self.export_status.is_empty() {
+                ui.add_space(4.0);
+                ui.label(&self.export_status);
+                if ui.small_button("清除状态").clicked() {
+                    self.export_status.clear();
+                }
+            }
+        });
+
+        ui.add_space(16.0);
+        
+        ui.collapsing("导入数据", |ui| {
+            ui.label("从JSON文件导入文件条目");
+            ui.add_space(8.0);
+            
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut self.import_merge_mode, true, "合并模式");
+                ui.radio_value(&mut self.import_merge_mode, false, "替换模式");
+            });
+            
+            ui.label(if self.import_merge_mode {
+                "💡 合并模式：新数据会添加到现有数据中，相同路径的条目会被忽略"
+            } else {
+                "⚠️ 替换模式：新数据会完全替换现有数据"
+            });
+            
+            ui.add_space(8.0);
+            
+            if ui.button("📥 导入数据").clicked() {
+                self.import_data();
+            }
+            
+            if !self.import_status.is_empty() {
+                ui.add_space(4.0);
+                ui.label(&self.import_status);
+                if ui.small_button("清除状态").clicked() {
+                    self.import_status.clear();
+                }
+            }
+        });
+
+        ui.add_space(16.0);
+        
+        ui.collapsing("快速操作", |ui| {
+            ui.label("批量操作当前搜索结果中的条目");
+            ui.add_space(8.0);
+            
+            ui.horizontal(|ui| {
+                ui.label("标签：");
+                if ui.text_edit_singleline(&mut self.batch_tag_input).changed() {
+                    // 触发标签建议显示
+                }
+            });
+            
+            if !self.batch_tag_input.is_empty() {
+                self.render_tag_suggestions(ui, &self.batch_tag_input.clone());
+            }
+            
+            ui.horizontal(|ui| {
+                if ui.button("➕ 批量添加标签").clicked() && !self.batch_tag_input.is_empty() {
+                    self.batch_add_tags(&self.batch_tag_input.clone());
+                    self.batch_tag_input.clear();
+                }
+                
+                if ui.button("➖ 批量移除标签").clicked() && !self.batch_tag_input.is_empty() {
+                    self.batch_remove_tags(&self.batch_tag_input.clone());
+                    self.batch_tag_input.clear();
+                }
+            });
+            
+            ui.add_space(4.0);
+            ui.label(format!("当前显示 {} 个条目", self.filtered_indices.len()));
+        });
+    }
+
+    fn render_tag_manager(&mut self, ui: &mut egui::Ui) {
+        ui.heading("标签管理");
+        ui.separator();
+
+        ui.collapsing("标签统计", |ui| {
+            let stats = self.get_tag_usage_stats();
+            ui.label(format!("总计 {} 个标签", stats.len()));
+            ui.add_space(8.0);
+            
+            ui.horizontal(|ui| {
+                ui.label("筛选：");
+                ui.text_edit_singleline(&mut self.tag_cloud_filter);
+            });
+            
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    for (tag, count) in stats {
+                        if self.tag_cloud_filter.is_empty() || 
+                           tag.to_lowercase().contains(&self.tag_cloud_filter.to_lowercase()) {
+                            ui.horizontal(|ui| {
+                                let is_selected = self.selected_tags.contains(&tag);
+                                let mut selected = is_selected;
+                                if ui.checkbox(&mut selected, "").changed() {
+                                    if selected {
+                                        self.selected_tags.insert(tag.clone());
+                                    } else {
+                                        self.selected_tags.remove(&tag);
+                                    }
+                                }
+                                
+                                if ui.small_button(&tag).clicked() {
+                                    self.tag_filter = tag.clone();
+                                    self.force_update_filter();
+                                }
+                                
+                                ui.label(format!("({})", count));
+                            });
+                        }
+                    }
+                });
+        });
+
+        ui.add_space(16.0);
+        
+        ui.collapsing("快速标签", |ui| {
+            ui.label("点击快速添加到搜索过滤");
+            ui.add_space(8.0);
+            
+            let common_tags = ["#工作", "#项目", "#文档", "#图片", "#视频", "#音频", "#重要", "#临时"];
+            ui.horizontal_wrapped(|ui| {
+                for &tag in &common_tags {
+                    if ui.small_button(tag).clicked() {
+                        if !self.tag_filter.contains(tag) {
+                            if self.tag_filter.is_empty() {
+                                self.tag_filter = tag.to_string();
+                            } else {
+                                self.tag_filter = format!("{} {}", self.tag_filter, tag);
+                            }
+                            self.force_update_filter();
+                        }
+                    }
+                }
+            });
+        });
+
+        ui.add_space(16.0);
+        
+        if !self.selected_tags.is_empty() {
+            ui.collapsing("批量标签操作", |ui| {
+                ui.label(format!("已选择 {} 个标签", self.selected_tags.len()));
+                
+                ui.horizontal(|ui| {
+                    if ui.button("🔍 按选中标签过滤").clicked() {
+                        self.tag_filter = self.selected_tags.iter().cloned().collect::<Vec<_>>().join(" ");
+                        self.force_update_filter();
+                    }
+                    
+                    if ui.button("🗑️ 清除选择").clicked() {
+                        self.selected_tags.clear();
+                    }
+                });
+            });
+        }
+    }
+
     fn render_add_dialog(&mut self, ui: &mut egui::Ui) {
         ui.heading("添加文件");
         ui.separator();
@@ -440,8 +849,14 @@ impl FileManagerApp {
 
         ui.add_space(8.0);
         ui.label("标签 (使用 # 前缀):");
-        ui.text_edit_singleline(&mut self.add_tags_input);
+        if ui.text_edit_singleline(&mut self.add_tags_input).changed() {
+            self.show_tag_suggestions = !self.add_tags_input.is_empty();
+        }
         ui.small("示例: #重要 #工作 #项目 学习");
+        
+        if self.show_tag_suggestions {
+            self.render_tag_suggestions(ui, &self.add_tags_input.clone());
+        }
 
         ui.add_space(8.0);
         ui.label("描述 (可选):");
@@ -528,6 +943,7 @@ impl FileManagerApp {
                     let entry_name = entry.name.clone();
                     let (hash_tags, _path_tags) = entry.get_tag_categories();
                     let entry_is_directory = entry.is_directory;
+                    let entry_description = entry.description.clone();
                     
                     ui.group(|ui| {
                         ui.horizontal(|ui| {
@@ -553,15 +969,25 @@ impl FileManagerApp {
                         // 显示标签
                         if !hash_tags.is_empty() {
                             ui.horizontal_wrapped(|ui| {
-                                // 显示 # 标签
+                                ui.small("🏷️");
+                                // 显示 # 标签，点击可以添加到过滤器
                                 for tag in &hash_tags {
-                                    ui.small(egui::RichText::new(tag).color(egui::Color32::BLUE));
+                                    if ui.small_button(egui::RichText::new(tag).color(egui::Color32::BLUE)).clicked() {
+                                        if !self.tag_filter.contains(tag) {
+                                            if self.tag_filter.is_empty() {
+                                                self.tag_filter = tag.clone();
+                                            } else {
+                                                self.tag_filter = format!("{} {}", self.tag_filter, tag);
+                                            }
+                                            self.force_update_filter();
+                                        }
+                                    }
                                 }
                             });
                         }
                         
                         // 显示描述
-                        if let Some(desc) = &entry.description {
+                        if let Some(desc) = &entry_description {
                             ui.small(egui::RichText::new(desc).italics());
                         }
                     });
@@ -612,6 +1038,64 @@ impl FileManagerApp {
         ui.add_space(16.0);
         ui.label(format!("文件数量: {}", self.entries.len()));
         ui.label(format!("标签数量: {}", self.all_tags.len()));
+        
+        ui.add_space(16.0);
+        ui.collapsing("数据备份", |ui| {
+            ui.label("快速备份当前数据");
+            ui.add_space(8.0);
+            
+            ui.horizontal(|ui| {
+                if ui.button("🔄 创建备份").clicked() {
+                    let backup_name = format!("backup_{}.json", 
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs());
+                    
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("JSON文件", &["json"])
+                        .set_file_name(&backup_name)
+                        .save_file()
+                    {
+                        let backup_data = UserData {
+                            entries: self.entries.clone(),
+                            version: env!("CARGO_PKG_VERSION").to_string(),
+                        };
+                        
+                        match serde_json::to_string_pretty(&backup_data) {
+                            Ok(json) => {
+                                match std::fs::write(&path, json) {
+                                    Ok(_) => {
+                                        self.export_status = format!("✅ 备份成功: {}", path.display());
+                                    }
+                                    Err(e) => {
+                                        self.export_status = format!("❌ 备份失败: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.export_status = format!("❌ 备份序列化失败: {}", e);
+                            }
+                        }
+                    }
+                }
+                
+                if ui.button("📥 从备份恢复").clicked() {
+                    self.import_data();
+                }
+            });
+            
+            if !self.export_status.is_empty() {
+                ui.add_space(4.0);
+                ui.label(&self.export_status);
+                if ui.small_button("清除状态").clicked() {
+                    self.export_status.clear();
+                }
+            }
+            
+            ui.add_space(4.0);
+            ui.label("💡 提示: 建议定期备份数据以防丢失");
+        });
 
         ui.add_space(16.0);
         ui.collapsing("应用配置文件", |ui| {
@@ -711,24 +1195,35 @@ impl FileManagerApp {
         });
 
         ui.add_space(8.0);
-        ui.label("所有标签:");
-        egui::ScrollArea::vertical()
-            .max_height(200.0)
-            .show(ui, |ui| {
-                let mut hash_tags: Vec<_> = self.all_tags.iter()
-                    .filter(|tag| tag.starts_with('#'))
-                    .collect();
-                hash_tags.sort();
+        ui.collapsing("标签概览", |ui| {
+            let tag_stats = self.get_tag_usage_stats();
+            
+            if !tag_stats.is_empty() {
+                ui.label(egui::RichText::new("标签使用统计:").strong());
+                ui.add_space(4.0);
                 
-                if !hash_tags.is_empty() {
-                    ui.label(egui::RichText::new("标签:").strong());
-                    for tag in hash_tags {
-                        ui.small(egui::RichText::new(tag).color(egui::Color32::BLUE));
-                    }
-                } else {
-                    ui.label("还没有标签");
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for (tag, count) in tag_stats.iter().take(20) {
+                            ui.horizontal(|ui| {
+                                if ui.small_button(tag).clicked() {
+                                    self.tag_filter = tag.clone();
+                                    self.force_update_filter();
+                                }
+                                ui.label(format!("({} 个文件)", count));
+                            });
+                        }
+                    });
+                    
+                if tag_stats.len() > 20 {
+                    ui.label(format!("...还有 {} 个标签", tag_stats.len() - 20));
                 }
-            });
+            } else {
+                ui.label("还没有标签");
+                ui.small("在添加文件时可以为它们设置标签");
+            }
+        });
 
         ui.add_space(16.0);
         ui.add_space(16.0);
@@ -786,23 +1281,47 @@ impl eframe::App for FileManagerApp {
                     self.show_add_dialog = !self.show_add_dialog;
                     self.show_tag_editor = false;
                     self.show_settings = false;
+                    self.show_import_export = false;
+                    self.show_tag_manager = false;
+                }
+                
+                if ui.button("导入导出").clicked() {
+                    self.show_import_export = !self.show_import_export;
+                    self.show_add_dialog = false;
+                    self.show_tag_editor = false;
+                    self.show_settings = false;
+                    self.show_tag_manager = false;
+                }
+                
+                if ui.button("标签管理").clicked() {
+                    self.show_tag_manager = !self.show_tag_manager;
+                    self.show_add_dialog = false;
+                    self.show_tag_editor = false;
+                    self.show_settings = false;
+                    self.show_import_export = false;
                 }
                 
                 if ui.button("设置").clicked() {
                     self.show_settings = !self.show_settings;
                     self.show_add_dialog = false;
                     self.show_tag_editor = false;
+                    self.show_import_export = false;
+                    self.show_tag_manager = false;
                 }
             });
         });
 
         // 侧边面板
-        if self.show_add_dialog || self.show_tag_editor || self.show_settings {
+        if self.show_add_dialog || self.show_tag_editor || self.show_settings || self.show_import_export || self.show_tag_manager {
             egui::SidePanel::right("side").show(ctx, |ui| {
                 if self.show_add_dialog {
                     self.render_add_dialog(ui);
                 } else if self.show_tag_editor {
                     self.render_tag_editor(ui);
+                } else if self.show_import_export {
+                    self.render_import_export(ui);
+                } else if self.show_tag_manager {
+                    self.render_tag_manager(ui);
                 } else if self.show_settings {
                     self.render_settings(ui);
                 }
@@ -811,6 +1330,52 @@ impl eframe::App for FileManagerApp {
 
         // 主面板
         egui::CentralPanel::default().show(ctx, |ui| {
+            // 标签过滤显示
+            if !self.tag_filter.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label("🏷️ 标签过滤:");
+                    ui.label(egui::RichText::new(&self.tag_filter).color(egui::Color32::BLUE));
+                    if ui.small_button("❌").clicked() {
+                        self.tag_filter.clear();
+                        self.force_update_filter();
+                    }
+                });
+                ui.separator();
+            }
+            
+            // 快速标签过滤输入
+            ui.horizontal(|ui| {
+                ui.label("🏷️ 标签过滤:");
+                if ui.text_edit_singleline(&mut self.tag_filter).changed() {
+                    self.force_update_filter();
+                }
+                if !self.tag_filter.is_empty() && ui.small_button("清除").clicked() {
+                    self.tag_filter.clear();
+                    self.force_update_filter();
+                }
+            });
+            
+            // 显示常用标签作为快速过滤选项
+            if !self.all_tags.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("快速过滤:");
+                    let sorted_tags: Vec<String> = self.all_tags.iter().take(10).cloned().collect();
+                    for tag in sorted_tags {
+                        if ui.small_button(&tag).clicked() {
+                            if !self.tag_filter.contains(&tag) {
+                                if self.tag_filter.is_empty() {
+                                    self.tag_filter = tag.clone();
+                                } else {
+                                    self.tag_filter = format!("{} {}", self.tag_filter, tag);
+                                }
+                                self.force_update_filter();
+                            }
+                        }
+                    }
+                });
+            }
+            ui.add_space(8.0);
+            
             self.update_filter();
             self.render_list(ui);
         });

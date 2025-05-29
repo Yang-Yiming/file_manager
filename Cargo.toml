@@ -1,6 +1,6 @@
 [package]
 name = "file_manager"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "一个简洁高效的文件快速访问管理器"
 authors = ["File Manager Team"]
