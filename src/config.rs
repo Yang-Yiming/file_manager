@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct AppConfig {
     pub theme_mode: String,
     pub data_file_path: Option<String>, // 用户数据文件路径
+    pub compact_mode: bool, // 紧凑模式
 }
 
 impl Default for AppConfig {
@@ -14,6 +15,7 @@ impl Default for AppConfig {
         Self {
             theme_mode: "Light".to_string(),
             data_file_path: None,
+            compact_mode: false,
         }
     }
 }

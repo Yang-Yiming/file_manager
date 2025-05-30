@@ -4,6 +4,7 @@ mod app;
 mod config;
 mod file_entry;
 mod fonts;
+mod theme;
 
 use eframe::egui;
 
@@ -23,8 +24,8 @@ fn main() -> Result<(), eframe::Error> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([900.0, 600.0])
-            .with_min_inner_size([700.0, 450.0])
+            .with_inner_size([700.0, 500.0])
+            .with_min_inner_size([600.0, 400.0])
             .with_resizable(true)
             .with_title_shown(true)
             .with_decorations(true)
@@ -50,7 +51,7 @@ fn main() -> Result<(), eframe::Error> {
     println!("正在初始化应用程序...");
 
     eframe::run_native(
-        "文件快速访问器 v0.2.0",
+        "文件快速访问器 v0.2.2",
         options,
         Box::new(|cc| {
             // 设置渲染选项
@@ -81,10 +82,8 @@ fn setup_rendering(ctx: &egui::Context) {
         tess_options.epsilon = 0.0001;
     });
     
-    // 设置默认视觉样式
-    let visuals = egui::Visuals::default();
-    // 可以在这里自定义视觉样式
-    ctx.set_visuals(visuals);
+    // 应用现代化主题
+    theme::ModernTheme::apply_theme(ctx, theme::ThemeMode::System);
 }
 
 /// 检查配置文件访问权限
