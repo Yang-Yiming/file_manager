@@ -55,6 +55,11 @@ pub struct FileManagerApp {
     selected_tags: HashSet<String>,
     batch_tag_input: String,
     show_tag_suggestions: bool,
+
+    // 删除确认对话框相关
+    show_delete_confirm: bool,
+    delete_entry_index: Option<usize>,
+    delete_entry_name: String,
 }
 
 impl Default for FileManagerApp {
@@ -163,6 +168,11 @@ impl FileManagerApp {
             batch_tag_input: String::new(),
             show_tag_suggestions: false,
             add_entry_type: crate::file_entry::EntryType::File,
+
+            // 删除确认对话框相关
+            show_delete_confirm: false,
+            delete_entry_index: None,
+            delete_entry_name: String::new(),
         }
     }
 
@@ -961,7 +971,6 @@ impl FileManagerApp {
     }
 
     fn render_list(&mut self, ui: &mut egui::Ui) {
-        let mut to_remove: Option<usize> = None;
         let mut to_edit: Option<usize> = None;
         let mut to_expand: Option<usize> = None;
         let mut to_collapse: Option<usize> = None;
@@ -1036,7 +1045,13 @@ impl FileManagerApp {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     if ui.small_button("X").clicked() {
-                                        to_remove = Some(index);
+                                        self.show_delete_confirm = true;
+                                        self.delete_entry_index = Some(index);
+                                        self.delete_entry_name = if let Some(nickname) = &entry_nickname {
+                                            nickname.clone()
+                                        } else {
+                                            entry_name.clone()
+                                        };
                                     }
                                     if ui.small_button("Edit").clicked() {
                                         to_edit = Some(index);
@@ -1129,7 +1144,13 @@ impl FileManagerApp {
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
                                     if ui.small_button("🗑").clicked() {
-                                        to_remove = Some(index);
+                                        self.show_delete_confirm = true;
+                                        self.delete_entry_index = Some(index);
+                                        self.delete_entry_name = if let Some(nickname) = &entry_nickname {
+                                            nickname.clone()
+                                        } else {
+                                            entry_name.clone()
+                                        };
                                     }
                                     if ui.small_button("✏").clicked() {
                                         to_edit = Some(index);
@@ -1173,9 +1194,7 @@ impl FileManagerApp {
             self.force_update_filter();
         }
 
-        if let Some(index) = to_remove {
-            self.remove_entry(index);
-        }
+        // 删除功能已移到确认对话框中处理
 
         if let Some(index) = to_edit {
             self.edit_entry_tags(index);
@@ -1470,6 +1489,44 @@ impl FileManagerApp {
             self.force_update_filter();
         }
     }
+
+    fn render_delete_confirm_dialog(&mut self, ctx: &egui::Context) {
+        if self.show_delete_confirm {
+            egui::Window::new("确认删除")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(10.0);
+                        ui.label(format!("确定要删除 \"{}\" 吗？", self.delete_entry_name));
+                        ui.add_space(10.0);
+                        ui.label("此操作无法撤销。");
+                        ui.add_space(20.0);
+                        
+                        ui.horizontal(|ui| {
+                            if ui.button("取消").clicked() {
+                                self.show_delete_confirm = false;
+                                self.delete_entry_index = None;
+                                self.delete_entry_name.clear();
+                            }
+                            
+                            ui.add_space(20.0);
+                            
+                            if ui.button("确认删除").clicked() {
+                                if let Some(index) = self.delete_entry_index {
+                                    self.remove_entry(index);
+                                }
+                                self.show_delete_confirm = false;
+                                self.delete_entry_index = None;
+                                self.delete_entry_name.clear();
+                            }
+                        });
+                        ui.add_space(10.0);
+                    });
+                });
+        }
+    }
 }
 
 impl eframe::App for FileManagerApp {
@@ -1594,5 +1651,8 @@ impl eframe::App for FileManagerApp {
             self.update_filter();
             self.render_list(ui);
         });
+
+        // 删除确认对话框
+        self.render_delete_confirm_dialog(ctx);
     }
 }
