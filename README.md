@@ -23,6 +23,7 @@
 
 ### 从源码构建
 
+#### macOS
 ```bash
 # 克隆项目
 git clone <repository-url>
@@ -33,6 +34,32 @@ cd file_manager
 
 # 或快速更新
 ./BuildApp/MacOS/update.sh --quick
+```
+
+#### Windows
+```cmd
+REM 克隆项目
+git clone <repository-url>
+cd file_manager
+
+REM 构建应用程序
+BuildApp\Windows\build.bat
+
+REM 或快速更新
+BuildApp\Windows\update.bat --quick
+```
+
+#### Linux
+```bash
+# 克隆项目
+git clone <repository-url>
+cd file_manager
+
+# 构建应用程序
+./BuildApp/Linux/build.sh
+
+# 或快速更新
+./BuildApp/Linux/update.sh --quick
 ```
 
 ## 🎯 使用方法
@@ -156,6 +183,14 @@ github         - 搜索名称或昵称包含"github"的条目
 
 # 跳过备份的快速更新
 ./BuildApp/MacOS/update.sh -q -b
+
+# Windows 示例
+BuildApp\Windows\update.bat -q
+BuildApp\Windows\update.bat -v 1.0.0
+
+# Linux 示例
+./BuildApp/Linux/update.sh -q
+./BuildApp/Linux/update.sh -v 1.0.0
 ```
 
 ## 📁 项目结构
@@ -169,12 +204,52 @@ file_manager/
 │   ├── file_entry.rs      # 文件条目
 │   └── fonts.rs           # 字体设置
 ├── res/                    # 资源文件
-├── BuildApp/MacOS/         # 构建脚本
-│   ├── build.sh           # 完整构建
-│   └── update.sh          # 智能更新
-├── FileManager.app/        # 构建输出
+├── BuildApp/               # 跨平台构建脚本
+│   ├── MacOS/             # macOS 构建脚本
+│   │   ├── build.sh       # 完整构建
+│   │   ├── update.sh      # 智能更新
+│   │   └── README.md      # macOS 构建说明
+│   ├── Windows/           # Windows 构建脚本
+│   │   ├── build.bat      # 完整构建
+│   │   ├── update.bat     # 智能更新
+│   │   └── README.md      # Windows 构建说明
+│   └── Linux/             # Linux 构建脚本
+│       ├── build.sh       # 完整构建
+│       ├── update.sh      # 智能更新
+│       └── README.md      # Linux 构建说明
+├── FileManager.app/        # macOS 构建输出
+├── FileManager/            # Windows/Linux 构建输出
 ├── Cargo.toml             # 项目配置
-└── README.md              # 本文档
+├── build.rs               # 构建配置
+└── README.md              # 项目文档
+```
+
+## 🔧 跨平台开发指南
+
+### 系统要求
+
+| 平台 | 系统版本 | 依赖要求 |
+|------|----------|----------|
+| **macOS** | 10.13+ | Xcode Command Line Tools |
+| **Windows** | Windows 7+ | Visual Studio Build Tools |
+| **Linux** | 主流发行版 | GTK+ 3.0, X11 开发包 |
+
+### 构建命令对照
+
+| 操作 | macOS | Windows | Linux |
+|------|-------|---------|-------|
+| **完整构建** | `./BuildApp/MacOS/build.sh` | `BuildApp\Windows\build.bat` | `./BuildApp/Linux/build.sh` |
+| **快速更新** | `./BuildApp/MacOS/update.sh -q` | `BuildApp\Windows\update.bat -q` | `./BuildApp/Linux/update.sh -q` |
+| **版本更新** | `./BuildApp/MacOS/update.sh -v 1.0.0` | `BuildApp\Windows\update.bat -v 1.0.0` | `./BuildApp/Linux/update.sh -v 1.0.0` |
+| **获取帮助** | `./BuildApp/MacOS/update.sh -h` | `BuildApp\Windows\update.bat -h` | `./BuildApp/Linux/update.sh -h` |
+
+### 输出文件说明
+
+| 平台 | 输出目录 | 主要文件 | 安装方式 |
+|------|----------|----------|----------|
+| **macOS** | `FileManager.app` | 应用程序包 | 拖拽到 Applications |
+| **Windows** | `FileManager/` | `file_manager.exe` | 便携式，直接运行 |
+| **Linux** | `FileManager/` | `bin/file_manager` | 便携式或系统安装 |
 ```
 
 ## 🎨 使用技巧
