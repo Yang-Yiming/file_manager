@@ -33,6 +33,7 @@ pub struct FileManagerApp {
     add_tags_input: String,
     add_description_input: String,
     show_add_dialog: bool,
+    add_entry_type: crate::file_entry::EntryType,
 
     // 标签编辑相关
     show_tag_editor: bool,
@@ -161,6 +162,7 @@ impl FileManagerApp {
             selected_tags: HashSet::new(),
             batch_tag_input: String::new(),
             show_tag_suggestions: false,
+            add_entry_type: crate::file_entry::EntryType::File,
         }
     }
 
@@ -258,17 +260,6 @@ impl FileManagerApp {
             return;
         }
 
-        let path = PathBuf::from(&self.add_path_input);
-        let name = if self.add_name_input.is_empty() {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("未命名")
-                .to_string()
-        } else {
-            self.add_name_input.clone()
-        };
-
-        let is_directory = path.is_dir();
         let tags = FileEntry::parse_tags(&self.add_tags_input);
         let description = if self.add_description_input.is_empty() {
             None
@@ -282,14 +273,49 @@ impl FileManagerApp {
             Some(self.add_nickname_input.clone())
         };
 
-        let entry = FileEntry::new_with_nickname(
-            path,
-            name,
-            nickname,
-            description,
-            tags.clone(),
-            is_directory,
-        );
+        let entry = match self.add_entry_type {
+            crate::file_entry::EntryType::WebLink => {
+                let name = if self.add_name_input.is_empty() {
+                    // 从URL中提取网站名称作为默认名称
+                    self.extract_site_name(&self.add_path_input)
+                } else {
+                    self.add_name_input.clone()
+                };
+
+                FileEntry::new_web_link(
+                    name,
+                    self.add_path_input.clone(),
+                    nickname,
+                    description,
+                    tags.clone(),
+                )
+            }
+            _ => {
+                let path = PathBuf::from(&self.add_path_input);
+                let name = if self.add_name_input.is_empty() {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("未命名")
+                        .to_string()
+                } else {
+                    self.add_name_input.clone()
+                };
+
+                let is_directory = match self.add_entry_type {
+                    crate::file_entry::EntryType::Directory => true,
+                    _ => path.is_dir(),
+                };
+
+                FileEntry::new_with_nickname(
+                    path,
+                    name,
+                    nickname,
+                    description,
+                    tags.clone(),
+                    is_directory,
+                )
+            }
+        };
 
         // 更新标签集合
         for tag in &tags {
@@ -305,6 +331,7 @@ impl FileManagerApp {
         self.add_nickname_input.clear();
         self.add_tags_input.clear();
         self.add_description_input.clear();
+        self.add_entry_type = crate::file_entry::EntryType::File;
         self.show_add_dialog = false;
 
         // 强制重新过滤并更新索引
@@ -346,6 +373,38 @@ impl FileManagerApp {
         #[cfg(target_os = "linux")]
         {
             let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+        }
+    }
+
+    fn open_entry(&self, entry: &FileEntry) {
+        match entry.entry_type {
+            crate::file_entry::EntryType::WebLink => {
+                if let Some(url) = &entry.url {
+                    self.open_url(url);
+                }
+            }
+            _ => {
+                self.open_path(&entry.path);
+            }
+        }
+    }
+
+    fn open_url(&self, url: &str) {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("cmd")
+                .args(&["/C", "start", url])
+                .spawn();
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open").arg(url).spawn();
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
         }
     }
 
@@ -752,24 +811,64 @@ impl FileManagerApp {
     }
 
     fn render_add_dialog(&mut self, ui: &mut egui::Ui) {
-        ui.heading("添加文件");
+        ui.heading("添加条目");
         ui.separator();
 
-        ui.label("路径:");
-        ui.text_edit_singleline(&mut self.add_path_input);
-
+        // 条目类型选择
+        ui.label("类型:");
         ui.horizontal(|ui| {
-            if ui.button("选择文件").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                    self.add_path_input = path.to_string_lossy().to_string();
-                }
-            }
-            if ui.button("选择文件夹").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.add_path_input = path.to_string_lossy().to_string();
-                }
-            }
+            ui.radio_value(&mut self.add_entry_type, crate::file_entry::EntryType::File, "文件");
+            ui.radio_value(&mut self.add_entry_type, crate::file_entry::EntryType::Directory, "文件夹");
+            ui.radio_value(&mut self.add_entry_type, crate::file_entry::EntryType::WebLink, "网页链接");
         });
+
+        ui.add_space(8.0);
+
+        // 根据类型显示不同的输入字段
+        match self.add_entry_type {
+        crate::file_entry::EntryType::WebLink => {
+            ui.label("网页地址:");
+            if ui.text_edit_singleline(&mut self.add_path_input).changed() {
+                // 当URL改变时，如果名称为空，自动填充网站名称
+                if self.add_name_input.is_empty() && self.is_valid_url(&self.add_path_input) {
+                    self.add_name_input = self.extract_site_name(&self.add_path_input);
+                }
+            }
+            ui.small("请输入完整的URL，如: https://www.example.com");
+                
+            // URL验证提示
+            if !self.add_path_input.is_empty() && !self.is_valid_url(&self.add_path_input) {
+                ui.colored_label(
+                    egui::Color32::from_rgb(200, 50, 50),
+                    "⚠ 请输入有效的URL地址"
+                );
+            } else if !self.add_path_input.is_empty() && self.is_valid_url(&self.add_path_input) {
+                ui.colored_label(
+                    egui::Color32::from_rgb(50, 150, 50),
+                    "✓ URL格式正确"
+                );
+            }
+        }
+            _ => {
+                ui.label("路径:");
+                ui.text_edit_singleline(&mut self.add_path_input);
+
+                ui.horizontal(|ui| {
+                    if ui.button("选择文件").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_file() {
+                            self.add_path_input = path.to_string_lossy().to_string();
+                            self.add_entry_type = crate::file_entry::EntryType::File;
+                        }
+                    }
+                    if ui.button("选择文件夹").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                            self.add_path_input = path.to_string_lossy().to_string();
+                            self.add_entry_type = crate::file_entry::EntryType::Directory;
+                        }
+                    }
+                });
+            }
+        }
 
         ui.add_space(8.0);
         ui.label("名称:");
@@ -797,9 +896,18 @@ impl FileManagerApp {
 
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("添加").clicked() {
-                self.add_entry();
-            }
+            let can_add = match self.add_entry_type {
+                crate::file_entry::EntryType::WebLink => {
+                    !self.add_path_input.is_empty() && self.is_valid_url(&self.add_path_input)
+                }
+                _ => !self.add_path_input.is_empty()
+            };
+            
+            ui.add_enabled_ui(can_add, |ui| {
+                if ui.button("添加").clicked() {
+                    self.add_entry();
+                }
+            });
             if ui.button("取消").clicked() {
                 self.show_add_dialog = false;
                 self.add_path_input.clear();
@@ -807,6 +915,7 @@ impl FileManagerApp {
                 self.add_nickname_input.clear();
                 self.add_tags_input.clear();
                 self.add_description_input.clear();
+                self.add_entry_type = crate::file_entry::EntryType::File;
             }
         });
     }
@@ -852,26 +961,30 @@ impl FileManagerApp {
     }
 
     fn render_list(&mut self, ui: &mut egui::Ui) {
-        let mut to_remove = None;
-        let mut to_edit = None;
-        let filtered_indices = self.filtered_indices.clone();
+        let mut to_remove: Option<usize> = None;
+        let mut to_edit: Option<usize> = None;
+        let mut to_expand: Option<usize> = None;
+        let mut to_collapse: Option<usize> = None;
+        let mut to_open: Option<usize> = None;
+        let mut search_update: Option<String> = None;
 
         egui::ScrollArea::vertical()
+            .max_height(ui.available_height() - 50.0)
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
 
-                for &index in &filtered_indices {
+                for &index in &self.filtered_indices {
                     if index >= self.entries.len() {
                         continue;
                     }
                     let entry = &self.entries[index];
-                    let entry_path = entry.path.clone();
                     let entry_name = entry.name.clone();
                     let entry_nickname = entry.nickname.clone();
                     let (hash_tags, _path_tags) = entry.get_tag_categories();
-                    let entry_is_directory = entry.is_directory;
                     let entry_description = entry.description.clone();
+                    let entry_type = entry.entry_type.clone();
+                    let entry_path = entry.path.clone();
 
                     let is_expanded = self.expanded_entries.contains(&index);
 
@@ -880,24 +993,24 @@ impl FileManagerApp {
                         ui.horizontal(|ui| {
                             // 展开按钮
                             if ui.small_button("[+]").clicked() {
-                                self.expanded_entries.insert(index);
+                                to_expand = Some(index);
                             }
 
-                            let icon = if entry_is_directory {
-                                "[DIR]"
-                            } else {
-                                "[FILE]"
+                            let icon = match entry_type {
+                                crate::file_entry::EntryType::Directory => "[DIR]",
+                                crate::file_entry::EntryType::WebLink => "[LINK]",
+                                _ => "[FILE]",
                             };
                             ui.label(icon);
 
                             // 文件名/昵称
                             if let Some(nickname) = &entry_nickname {
                                 if ui.link(nickname).clicked() {
-                                    self.open_path(&entry_path);
+                                    to_open = Some(index);
                                 }
                             } else {
                                 if ui.link(&entry_name).clicked() {
-                                    self.open_path(&entry_path);
+                                    to_open = Some(index);
                                 }
                             }
 
@@ -936,14 +1049,14 @@ impl FileManagerApp {
                         ui.horizontal(|ui| {
                             // 点击收起
                             if is_expanded && ui.small_button("[-]").clicked() {
-                                self.expanded_entries.remove(&index);
+                                to_collapse = Some(index);
                             }
 
                             // 文件图标
-                            let icon = if entry_is_directory {
-                                "[DIR]"
-                            } else {
-                                "[FILE]"
+                            let icon = match entry_type {
+                                crate::file_entry::EntryType::Directory => "[DIR]",
+                                crate::file_entry::EntryType::WebLink => "[LINK]",
+                                _ => "[FILE]",
                             };
                             ui.label(icon);
 
@@ -954,7 +1067,7 @@ impl FileManagerApp {
                                 // 文件名/昵称
                                 if let Some(nickname) = &entry_nickname {
                                     if ui.link(nickname).clicked() {
-                                        self.open_path(&entry_path);
+                                        to_open = Some(index);
                                     }
                                     ui.small(
                                         egui::RichText::new(&entry_name)
@@ -962,7 +1075,7 @@ impl FileManagerApp {
                                     );
                                 } else {
                                     if ui.link(&entry_name).clicked() {
-                                        self.open_path(&entry_path);
+                                        to_open = Some(index);
                                     }
                                 }
 
@@ -985,20 +1098,30 @@ impl FileManagerApp {
                                                 let tag_query =
                                                     format!("#{}", tag.trim_start_matches('#'));
                                                 if !self.search_query.contains(&tag_query) {
-                                                    self.search_query =
-                                                        if self.search_query.is_empty() {
-                                                            tag_query
-                                                        } else {
-                                                            format!(
-                                                                "{} {}",
-                                                                self.search_query, tag_query
-                                                            )
-                                                        };
-                                                    self.force_update_filter();
+                                                    let new_query = if self.search_query.is_empty() {
+                                                        tag_query
+                                                    } else {
+                                                        format!("{} {}", self.search_query, tag_query)
+                                                    };
+                                                    search_update = Some(new_query);
                                                 }
                                             }
                                         }
                                     });
+                                }
+
+                                // 路径
+                                let display_path = if entry_type == crate::file_entry::EntryType::WebLink {
+                                    entry.url.clone().unwrap_or_else(|| entry_path.to_string_lossy().to_string())
+                                } else {
+                                    entry_path.to_string_lossy().to_string()
+                                };
+                                                
+                                if !display_path.is_empty() {
+                                    ui.small(
+                                        egui::RichText::new(format!("Path: {}", display_path))
+                                            .color(ModernTheme::weak_text_color(ui.ctx())),
+                                    );
                                 }
                             });
 
@@ -1019,7 +1142,7 @@ impl FileManagerApp {
                     ui.separator();
                 }
 
-                if filtered_indices.is_empty() {
+                if self.filtered_indices.is_empty() {
                     ui.add_space(40.0);
                     ui.vertical_centered(|ui| {
                         if self.entries.is_empty() {
@@ -1033,12 +1156,79 @@ impl FileManagerApp {
                 }
             });
 
+        // 处理延迟操作
+        if let Some(index) = to_expand {
+            self.expanded_entries.insert(index);
+        }
+        if let Some(index) = to_collapse {
+            self.expanded_entries.remove(&index);
+        }
+        if let Some(index) = to_open {
+            if let Some(entry) = self.entries.get(index) {
+                self.open_entry(entry);
+            }
+        }
+        if let Some(new_query) = search_update {
+            self.search_query = new_query;
+            self.force_update_filter();
+        }
+
         if let Some(index) = to_remove {
             self.remove_entry(index);
         }
 
         if let Some(index) = to_edit {
             self.edit_entry_tags(index);
+        }
+    }
+
+    /// 验证URL格式
+    fn is_valid_url(&self, url: &str) -> bool {
+        if url.is_empty() {
+            return false;
+        }
+        
+        // 基本URL格式验证
+        if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://")) {
+            return false;
+        }
+        
+        // 检查是否包含域名
+        if let Some(domain_start) = url.find("://") {
+            let remaining = &url[domain_start + 3..];
+            if remaining.is_empty() || remaining.starts_with('/') {
+                return false;
+            }
+            // 简单检查域名是否包含点号
+            let domain_part = remaining.split('/').next().unwrap_or("");
+            return domain_part.contains('.') && domain_part.len() > 3;
+        }
+        
+        false
+    }
+
+    /// 从URL提取网站名称
+    fn extract_site_name(&self, url: &str) -> String {
+        if let Some(domain_start) = url.find("://") {
+            let remaining = &url[domain_start + 3..];
+            if let Some(domain_end) = remaining.find('/') {
+                let domain = &remaining[..domain_end];
+                // 移除 www. 前缀
+                if domain.starts_with("www.") {
+                    domain[4..].to_string()
+                } else {
+                    domain.to_string()
+                }
+            } else {
+                // 移除 www. 前缀
+                if remaining.starts_with("www.") {
+                    remaining[4..].to_string()
+                } else {
+                    remaining.to_string()
+                }
+            }
+        } else {
+            url.to_string()
         }
     }
 

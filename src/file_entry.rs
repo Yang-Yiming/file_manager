@@ -2,6 +2,19 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use pinyin::ToPinyin;
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum EntryType {
+    File,
+    Directory,
+    WebLink,
+}
+
+impl Default for EntryType {
+    fn default() -> Self {
+        EntryType::File
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FileEntry {
     pub path: PathBuf,
@@ -9,6 +22,11 @@ pub struct FileEntry {
     pub nickname: Option<String>,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub entry_type: EntryType,
+    pub url: Option<String>, // 网页链接地址
+    // 保持向后兼容性
+    #[serde(default)]
     pub is_directory: bool,
 }
 
@@ -20,14 +38,31 @@ impl FileEntry {
         tags: Vec<String>,
         is_directory: bool,
     ) -> Self {
+        let entry_type = if is_directory {
+            EntryType::Directory
+        } else {
+            EntryType::File
+        };
+        
         Self {
             path,
             name,
             nickname: None,
             description,
             tags,
+            entry_type,
+            url: None,
             is_directory,
         }
+    }
+
+    /// 从旧版本数据迁移时使用的构造函数
+    pub fn migrate_from_old(mut self) -> Self {
+        // 如果entry_type是默认值，根据is_directory重新设置
+        if self.entry_type == EntryType::File && self.is_directory {
+            self.entry_type = EntryType::Directory;
+        }
+        self
     }
 
     pub fn new_with_nickname(
@@ -38,15 +73,45 @@ impl FileEntry {
         tags: Vec<String>,
         is_directory: bool,
     ) -> Self {
+        let entry_type = if is_directory {
+            EntryType::Directory
+        } else {
+            EntryType::File
+        };
+        
         Self {
             path,
             name,
             nickname,
             description,
             tags,
+            entry_type,
+            url: None,
             is_directory,
         }
     }
+
+    /// 创建网页链接条目
+    pub fn new_web_link(
+        name: String,
+        url: String,
+        nickname: Option<String>,
+        description: Option<String>,
+        tags: Vec<String>,
+    ) -> Self {
+        Self {
+            path: PathBuf::from(&url), // 将URL作为路径存储，用于显示
+            name,
+            nickname,
+            description,
+            tags,
+            entry_type: EntryType::WebLink,
+            url: Some(url),
+            is_directory: false,
+        }
+    }
+
+
 
     /// 将中文转换为拼音首字母
     fn to_pinyin_initials(text: &str) -> String {

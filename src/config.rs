@@ -30,7 +30,7 @@ impl Default for UserData {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
-            version: "0.2.0".to_string(),
+            version: "0.2.3".to_string(),
         }
     }
 }
@@ -159,18 +159,26 @@ impl DataManager {
                 serde_json::from_str::<UserData>(&content)
                     .or_else(|_| {
                         // 兼容旧格式：直接是entries数组或者包含entries的Config
-                        if let Ok(entries) = serde_json::from_str::<Vec<FileEntry>>(&content) {
+                        if let Ok(mut entries) = serde_json::from_str::<Vec<FileEntry>>(&content) {
+                            // 迁移旧数据格式
+                            for entry in &mut entries {
+                                *entry = entry.clone().migrate_from_old();
+                            }
                             Ok(UserData {
                                 entries,
-                                version: "0.2.0".to_string(),
+                                version: "0.2.3".to_string(),
                             })
                         } else if let Ok(old_config) = serde_json::from_str::<serde_json::Value>(&content) {
                             if let Some(entries_value) = old_config.get("entries") {
-                                let entries: Vec<FileEntry> = serde_json::from_value(entries_value.clone())
+                                let mut entries: Vec<FileEntry> = serde_json::from_value(entries_value.clone())
                                     .unwrap_or_default();
+                                // 迁移旧数据格式
+                                for entry in &mut entries {
+                                    *entry = entry.clone().migrate_from_old();
+                                }
                                 Ok(UserData {
                                     entries,
-                                    version: "0.2.0".to_string(),
+                                    version: "0.2.3".to_string(),
                                 })
                             } else {
                                 Ok(UserData::default())
