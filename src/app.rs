@@ -60,6 +60,17 @@ pub struct FileManagerApp {
     show_delete_confirm: bool,
     delete_entry_index: Option<usize>,
     delete_entry_name: String,
+
+    // 集合管理相关
+    show_collection_manager: bool,
+    editing_collection_index: Option<usize>,
+    collection_child_selection: HashSet<usize>,
+    
+    // 批量选择相关
+    batch_selection_mode: bool,
+    selected_entries: HashSet<usize>,
+    show_batch_collection_dialog: bool,
+    batch_collection_name: String,
 }
 
 impl Default for FileManagerApp {
@@ -76,6 +87,8 @@ impl FileManagerApp {
         self.show_settings = false;
         self.show_import_export = false;
         self.show_tag_manager = false;
+        self.show_collection_manager = false;
+        self.show_batch_collection_dialog = false;
 
         // 打开指定面板
         match panel_name {
@@ -84,6 +97,8 @@ impl FileManagerApp {
             "settings" => self.show_settings = true,
             "import_export" => self.show_import_export = true,
             "tag_manager" => self.show_tag_manager = true,
+            "collection_manager" => self.show_collection_manager = true,
+            "batch_collection_dialog" => self.show_batch_collection_dialog = true,
             _ => {}
         }
     }
@@ -173,6 +188,15 @@ impl FileManagerApp {
             show_delete_confirm: false,
             delete_entry_index: None,
             delete_entry_name: String::new(),
+
+            show_collection_manager: false,
+            editing_collection_index: None,
+            collection_child_selection: HashSet::new(),
+            
+            batch_selection_mode: false,
+            selected_entries: HashSet::new(),
+            show_batch_collection_dialog: false,
+            batch_collection_name: String::new(),
         }
     }
 
@@ -266,7 +290,17 @@ impl FileManagerApp {
     }
 
     fn add_entry(&mut self) {
-        if self.add_path_input.is_empty() {
+        // 对于集合类型，不需要路径检查
+        if self.add_entry_type != crate::file_entry::EntryType::Collection
+            && self.add_path_input.is_empty()
+        {
+            return;
+        }
+
+        // 对于集合类型，名称是必需的
+        if self.add_entry_type == crate::file_entry::EntryType::Collection
+            && self.add_name_input.is_empty()
+        {
             return;
         }
 
@@ -298,6 +332,16 @@ impl FileManagerApp {
                     nickname,
                     description,
                     tags.clone(),
+                )
+            }
+            crate::file_entry::EntryType::Collection => {
+                let child_entries: Vec<usize> = self.collection_child_selection.iter().cloned().collect();
+                FileEntry::new_collection(
+                    self.add_name_input.clone(),
+                    nickname,
+                    description,
+                    tags.clone(),
+                    child_entries,
                 )
             }
             _ => {
@@ -335,13 +379,14 @@ impl FileManagerApp {
         self.entries.push(entry);
         let _ = self.save_user_data();
 
-        // 清空输入
+        // 清空输入框
         self.add_path_input.clear();
         self.add_name_input.clear();
         self.add_nickname_input.clear();
         self.add_tags_input.clear();
         self.add_description_input.clear();
         self.add_entry_type = crate::file_entry::EntryType::File;
+        self.collection_child_selection.clear();
         self.show_add_dialog = false;
 
         // 强制重新过滤并更新索引
@@ -393,6 +438,9 @@ impl FileManagerApp {
                     self.open_url(url);
                 }
             }
+            crate::file_entry::EntryType::Collection => {
+                self.open_collection(entry);
+            }
             _ => {
                 self.open_path(&entry.path);
             }
@@ -415,6 +463,19 @@ impl FileManagerApp {
         #[cfg(target_os = "linux")]
         {
             let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        }
+    }
+
+    fn open_collection(&self, collection: &FileEntry) {
+        // 依次打开集合中的所有子项目
+        for &child_index in &collection.child_entries {
+            if child_index < self.entries.len() {
+                let child_entry = &self.entries[child_index];
+                self.open_entry(child_entry);
+
+                // 在打开多个项目之间添加短暂延迟，避免系统过载
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
     }
 
@@ -799,25 +860,203 @@ impl FileManagerApp {
                 }
             }
         });
+    }
 
-        if !self.selected_tags.is_empty() {
-            ui.add_space(12.0);
-            ui.label(format!("已选择 {} 个标签", self.selected_tags.len()));
-            ui.horizontal(|ui| {
-                if ui.button("按选中标签过滤").clicked() {
-                    let tag_queries: Vec<String> = self
-                        .selected_tags
-                        .iter()
-                        .map(|tag| format!("#{}", tag.trim_start_matches('#')))
-                        .collect();
-                    self.search_query = tag_queries.join(" ");
-                    self.force_update_filter();
-                }
-                if ui.button("清除选择").clicked() {
-                    self.selected_tags.clear();
+    fn render_collection_manager(&mut self, ui: &mut egui::Ui) {
+        ui.heading("集合管理器");
+        ui.separator();
+
+        // 选择要编辑的集合
+        ui.label("选择集合:");
+        let collections: Vec<(usize, &FileEntry)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.entry_type == crate::file_entry::EntryType::Collection)
+            .collect();
+
+        if collections.is_empty() {
+            ui.label("还没有创建任何集合");
+            ui.small("请先添加一个集合类型的条目");
+            return;
+        }
+
+        let mut selected_collection_name = self
+            .editing_collection_index
+            .and_then(|idx| collections.iter().find(|(i, _)| *i == idx))
+            .map(|(_, entry)| entry.name.clone())
+            .unwrap_or_else(|| "选择集合...".to_string());
+
+        egui::ComboBox::from_label("")
+            .selected_text(&selected_collection_name)
+            .show_ui(ui, |ui| {
+                for (index, entry) in &collections {
+                    let response = ui.selectable_value(
+                        &mut selected_collection_name,
+                        entry.name.clone(),
+                        &entry.name,
+                    );
+                    if response.clicked() {
+                        self.editing_collection_index = Some(*index);
+                        // 初始化子项选择状态
+                        self.collection_child_selection.clear();
+                        for &child_idx in &entry.child_entries {
+                            self.collection_child_selection.insert(child_idx);
+                        }
+                    }
                 }
             });
+
+        if let Some(collection_idx) = self.editing_collection_index {
+            ui.add_space(12.0);
+
+            if collection_idx < self.entries.len() {
+                let collection_name = self.entries[collection_idx].name.clone();
+                ui.label(format!("编辑集合: {}", collection_name));
+                ui.separator();
+
+                ui.label("选择要包含在集合中的项目:");
+
+                // 显示可选择的项目（排除集合类型本身）
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        for (idx, entry) in self.entries.iter().enumerate() {
+                            if idx == collection_idx
+                                || entry.entry_type == crate::file_entry::EntryType::Collection
+                            {
+                                continue; // 跳过当前编辑的集合和其他集合
+                            }
+
+                            let mut is_selected = self.collection_child_selection.contains(&idx);
+                            let entry_icon = match entry.entry_type {
+                                crate::file_entry::EntryType::File => "📄",
+                                crate::file_entry::EntryType::Directory => "📁",
+                                crate::file_entry::EntryType::WebLink => "🌐",
+                                _ => "📋",
+                            };
+
+                            ui.horizontal(|ui| {
+                                if ui.checkbox(&mut is_selected, "").changed() {
+                                    if is_selected {
+                                        self.collection_child_selection.insert(idx);
+                                    } else {
+                                        self.collection_child_selection.remove(&idx);
+                                    }
+                                }
+                                ui.label(format!("{} {}", entry_icon, entry.name));
+                                if let Some(nickname) = &entry.nickname {
+                                    ui.label(format!("({})", nickname));
+                                }
+                            });
+                        }
+                    });
+
+                ui.add_space(12.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("保存集合").clicked() {
+                        // 更新集合的子项目
+                        if let Some(collection) = self.entries.get_mut(collection_idx) {
+                            collection.child_entries =
+                                self.collection_child_selection.iter().cloned().collect();
+                            collection.child_entries.sort(); // 保持索引有序
+                            let _ = self.save_user_data();
+                        }
+                    }
+
+                    if ui.button("取消").clicked() {
+                        self.editing_collection_index = None;
+                        self.collection_child_selection.clear();
+                    }
+                });
+
+                // 显示当前集合信息
+                if let Some(collection) = self.entries.get(collection_idx) {
+                    ui.add_space(12.0);
+                    ui.label(format!(
+                        "当前集合包含 {} 个项目:",
+                        collection.child_entries.len()
+                    ));
+                    for &child_idx in &collection.child_entries {
+                        if let Some(child_entry) = self.entries.get(child_idx) {
+                            let entry_icon = match child_entry.entry_type {
+                                crate::file_entry::EntryType::File => "📄",
+                                crate::file_entry::EntryType::Directory => "📁",
+                                crate::file_entry::EntryType::WebLink => "🌐",
+                                _ => "📋",
+                            };
+                            ui.label(format!("  {} {}", entry_icon, child_entry.name));
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    fn render_batch_collection_dialog(&mut self, ui: &mut egui::Ui) {
+        ui.heading("批量创建集合");
+        ui.separator();
+
+        ui.label(format!("将要创建包含 {} 个项目的集合:", self.selected_entries.len()));
+        
+        // 显示选中的项目
+        egui::ScrollArea::vertical()
+            .max_height(150.0)
+            .show(ui, |ui| {
+                for &idx in &self.selected_entries {
+                    if let Some(entry) = self.entries.get(idx) {
+                        let entry_icon = match entry.entry_type {
+                            crate::file_entry::EntryType::File => "📄",
+                            crate::file_entry::EntryType::Directory => "📁",
+                            crate::file_entry::EntryType::WebLink => "🌐",
+                            crate::file_entry::EntryType::Collection => "📋",
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{} {}", entry_icon, entry.name));
+                            if let Some(nickname) = &entry.nickname {
+                                ui.small(format!("({})", nickname));
+                            }
+                        });
+                    }
+                }
+            });
+
+        ui.add_space(12.0);
+        ui.label("集合名称:");
+        ui.text_edit_singleline(&mut self.batch_collection_name);
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if ui.button("创建集合").clicked() && !self.batch_collection_name.is_empty() {
+                // 创建新集合
+                let child_entries: Vec<usize> = self.selected_entries.iter().cloned().collect();
+                let collection = FileEntry::new_collection(
+                    self.batch_collection_name.clone(),
+                    None,
+                    None,
+                    Vec::new(),
+                    child_entries,
+                );
+                
+                self.entries.push(collection);
+                let _ = self.save_user_data();
+                
+                // 清理状态
+                self.batch_collection_name.clear();
+                self.selected_entries.clear();
+                self.batch_selection_mode = false;
+                self.show_batch_collection_dialog = false;
+                
+                // 更新过滤
+                self.force_update_filter();
+            }
+            
+            if ui.button("取消").clicked() {
+                self.batch_collection_name.clear();
+                self.show_batch_collection_dialog = false;
+            }
+        });
     }
 
     fn render_add_dialog(&mut self, ui: &mut egui::Ui) {
@@ -827,38 +1066,105 @@ impl FileManagerApp {
         // 条目类型选择
         ui.label("类型:");
         ui.horizontal(|ui| {
-            ui.radio_value(&mut self.add_entry_type, crate::file_entry::EntryType::File, "文件");
-            ui.radio_value(&mut self.add_entry_type, crate::file_entry::EntryType::Directory, "文件夹");
-            ui.radio_value(&mut self.add_entry_type, crate::file_entry::EntryType::WebLink, "网页链接");
+            ui.radio_value(
+                &mut self.add_entry_type,
+                crate::file_entry::EntryType::File,
+                "文件",
+            );
+            ui.radio_value(
+                &mut self.add_entry_type,
+                crate::file_entry::EntryType::Directory,
+                "文件夹",
+            );
+            ui.radio_value(
+                &mut self.add_entry_type,
+                crate::file_entry::EntryType::WebLink,
+                "网页链接",
+            );
+            ui.radio_value(
+                &mut self.add_entry_type,
+                crate::file_entry::EntryType::Collection,
+                "集合",
+            );
         });
 
         ui.add_space(8.0);
 
         // 根据类型显示不同的输入字段
         match self.add_entry_type {
-        crate::file_entry::EntryType::WebLink => {
-            ui.label("网页地址:");
-            if ui.text_edit_singleline(&mut self.add_path_input).changed() {
-                // 当URL改变时，如果名称为空，自动填充网站名称
-                if self.add_name_input.is_empty() && self.is_valid_url(&self.add_path_input) {
-                    self.add_name_input = self.extract_site_name(&self.add_path_input);
+            crate::file_entry::EntryType::WebLink => {
+                ui.label("网页地址:");
+                if ui.text_edit_singleline(&mut self.add_path_input).changed() {
+                    // 当URL改变时，如果名称为空，自动填充网站名称
+                    if self.add_name_input.is_empty() && self.is_valid_url(&self.add_path_input) {
+                        self.add_name_input = self.extract_site_name(&self.add_path_input);
+                    }
+                }
+                ui.small("请输入完整的URL，如: https://www.example.com");
+
+                // URL验证提示
+                if !self.add_path_input.is_empty() && !self.is_valid_url(&self.add_path_input) {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 50, 50),
+                        "⚠ 请输入有效的URL地址",
+                    );
+                } else if !self.add_path_input.is_empty() && self.is_valid_url(&self.add_path_input)
+                {
+                    ui.colored_label(egui::Color32::from_rgb(50, 150, 50), "✓ URL格式正确");
                 }
             }
-            ui.small("请输入完整的URL，如: https://www.example.com");
+            crate::file_entry::EntryType::Collection => {
+                ui.label("集合信息:");
+                ui.small("选择要包含在集合中的项目:");
                 
-            // URL验证提示
-            if !self.add_path_input.is_empty() && !self.is_valid_url(&self.add_path_input) {
-                ui.colored_label(
-                    egui::Color32::from_rgb(200, 50, 50),
-                    "⚠ 请输入有效的URL地址"
-                );
-            } else if !self.add_path_input.is_empty() && self.is_valid_url(&self.add_path_input) {
-                ui.colored_label(
-                    egui::Color32::from_rgb(50, 150, 50),
-                    "✓ URL格式正确"
-                );
+                // 不需要路径输入，集合使用虚拟路径
+                self.add_path_input.clear();
+                
+                ui.add_space(8.0);
+                
+                // 显示可选择的项目（排除集合类型）
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for (idx, entry) in self.entries.iter().enumerate() {
+                            if entry.entry_type == crate::file_entry::EntryType::Collection {
+                                continue; // 跳过其他集合
+                            }
+
+                            let mut is_selected = self.collection_child_selection.contains(&idx);
+                            let entry_icon = match entry.entry_type {
+                                crate::file_entry::EntryType::File => "📄",
+                                crate::file_entry::EntryType::Directory => "📁",
+                                crate::file_entry::EntryType::WebLink => "🌐",
+                                _ => "📋",
+                            };
+
+                            ui.horizontal(|ui| {
+                                if ui.checkbox(&mut is_selected, "").changed() {
+                                    if is_selected {
+                                        self.collection_child_selection.insert(idx);
+                                    } else {
+                                        self.collection_child_selection.remove(&idx);
+                                    }
+                                }
+                                ui.label(format!("{} {}", entry_icon, entry.name));
+                                if let Some(nickname) = &entry.nickname {
+                                    ui.small(format!("({})", nickname));
+                                }
+                            });
+                        }
+                        
+                        if self.entries.iter().all(|e| e.entry_type == crate::file_entry::EntryType::Collection) {
+                            ui.label("没有可选择的项目");
+                            ui.small("请先添加一些文件、文件夹或网页链接");
+                        }
+                    });
+                
+                if !self.collection_child_selection.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(format!("已选择 {} 个项目", self.collection_child_selection.len()));
+                }
             }
-        }
             _ => {
                 ui.label("路径:");
                 ui.text_edit_singleline(&mut self.add_path_input);
@@ -910,9 +1216,12 @@ impl FileManagerApp {
                 crate::file_entry::EntryType::WebLink => {
                     !self.add_path_input.is_empty() && self.is_valid_url(&self.add_path_input)
                 }
-                _ => !self.add_path_input.is_empty()
+                crate::file_entry::EntryType::Collection => {
+                    !self.add_name_input.is_empty()
+                }
+                _ => !self.add_path_input.is_empty(),
             };
-            
+
             ui.add_enabled_ui(can_add, |ui| {
                 if ui.button("添加").clicked() {
                     self.add_entry();
@@ -926,6 +1235,7 @@ impl FileManagerApp {
                 self.add_tags_input.clear();
                 self.add_description_input.clear();
                 self.add_entry_type = crate::file_entry::EntryType::File;
+                self.collection_child_selection.clear();
             }
         });
     }
@@ -976,6 +1286,8 @@ impl FileManagerApp {
         let mut to_collapse: Option<usize> = None;
         let mut to_open: Option<usize> = None;
         let mut search_update: Option<String> = None;
+        let mut remove_from_collection: Option<(usize, usize)> = None;
+        let mut edit_collection: Option<usize> = None;
 
         egui::ScrollArea::vertical()
             .max_height(ui.available_height() - 50.0)
@@ -994,12 +1306,25 @@ impl FileManagerApp {
                     let entry_description = entry.description.clone();
                     let entry_type = entry.entry_type.clone();
                     let entry_path = entry.path.clone();
+                    let child_entries = entry.child_entries.clone();
 
                     let is_expanded = self.expanded_entries.contains(&index);
 
                     if self.compact_mode && !is_expanded {
                         // 紧凑模式：单行显示
                         ui.horizontal(|ui| {
+                            // 批量选择checkbox
+                            if self.batch_selection_mode {
+                                let mut is_selected = self.selected_entries.contains(&index);
+                                if ui.checkbox(&mut is_selected, "").changed() {
+                                    if is_selected {
+                                        self.selected_entries.insert(index);
+                                    } else {
+                                        self.selected_entries.remove(&index);
+                                    }
+                                }
+                            }
+                            
                             // 展开按钮
                             if ui.small_button("[+]").clicked() {
                                 to_expand = Some(index);
@@ -1008,6 +1333,7 @@ impl FileManagerApp {
                             let icon = match entry_type {
                                 crate::file_entry::EntryType::Directory => "[DIR]",
                                 crate::file_entry::EntryType::WebLink => "[LINK]",
+                                crate::file_entry::EntryType::Collection => "[集合]",
                                 _ => "[FILE]",
                             };
                             ui.label(icon);
@@ -1023,37 +1349,28 @@ impl FileManagerApp {
                                 }
                             }
 
-                            // 标签（显示数量和前几个标签）
+                            // 标签（只显示第一个）
                             if !hash_tags.is_empty() {
-                                let tag_count = hash_tags.len();
-                                let max_show = 3;
-
-                                ui.small(format!("({}) ", tag_count));
-
-                                let mut shown_tags = 0;
-                                for tag in &hash_tags {
-                                    if shown_tags >= max_show {
-                                        ui.small("...");
-                                        break;
-                                    }
-                                    ui.small(format!("{} ", tag));
-                                    shown_tags += 1;
+                                ui.small(&hash_tags[0]);
+                                if hash_tags.len() > 1 {
+                                    ui.small(format!("+{}", hash_tags.len() - 1));
                                 }
                             }
 
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if ui.small_button("X").clicked() {
+                                    if ui.small_button("🗑").clicked() {
                                         self.show_delete_confirm = true;
                                         self.delete_entry_index = Some(index);
-                                        self.delete_entry_name = if let Some(nickname) = &entry_nickname {
-                                            nickname.clone()
-                                        } else {
-                                            entry_name.clone()
-                                        };
+                                        self.delete_entry_name =
+                                            if let Some(nickname) = &entry_nickname {
+                                                nickname.clone()
+                                            } else {
+                                                entry_name.clone()
+                                            };
                                     }
-                                    if ui.small_button("Edit").clicked() {
+                                    if ui.small_button("✏").clicked() {
                                         to_edit = Some(index);
                                     }
                                 },
@@ -1062,6 +1379,18 @@ impl FileManagerApp {
                     } else {
                         // 展开模式：多行显示
                         ui.horizontal(|ui| {
+                            // 批量选择checkbox
+                            if self.batch_selection_mode {
+                                let mut is_selected = self.selected_entries.contains(&index);
+                                if ui.checkbox(&mut is_selected, "").changed() {
+                                    if is_selected {
+                                        self.selected_entries.insert(index);
+                                    } else {
+                                        self.selected_entries.remove(&index);
+                                    }
+                                }
+                            }
+                            
                             // 点击收起
                             if is_expanded && ui.small_button("[-]").clicked() {
                                 to_collapse = Some(index);
@@ -1071,6 +1400,7 @@ impl FileManagerApp {
                             let icon = match entry_type {
                                 crate::file_entry::EntryType::Directory => "[DIR]",
                                 crate::file_entry::EntryType::WebLink => "[LINK]",
+                                crate::file_entry::EntryType::Collection => "[集合]",
                                 _ => "[FILE]",
                             };
                             ui.label(icon);
@@ -1084,10 +1414,7 @@ impl FileManagerApp {
                                     if ui.link(nickname).clicked() {
                                         to_open = Some(index);
                                     }
-                                    ui.small(
-                                        egui::RichText::new(&entry_name)
-                                            .color(ModernTheme::weak_text_color(ui.ctx())),
-                                    );
+                                    ui.small(&entry_name);
                                 } else {
                                     if ui.link(&entry_name).clicked() {
                                         to_open = Some(index);
@@ -1096,11 +1423,7 @@ impl FileManagerApp {
 
                                 // 描述（如果有）
                                 if let Some(desc) = &entry_description {
-                                    ui.small(
-                                        egui::RichText::new(desc)
-                                            .italics()
-                                            .color(ModernTheme::weak_text_color(ui.ctx())),
-                                    );
+                                    ui.small(desc);
                                 }
 
                                 // 标签（完整显示）
@@ -1109,9 +1432,7 @@ impl FileManagerApp {
                                         ui.small("Tags:");
                                         for tag in &hash_tags {
                                             if ui.small_button(tag).clicked() {
-                                                // 将标签添加到搜索框
-                                                let tag_query =
-                                                    format!("#{}", tag.trim_start_matches('#'));
+                                                let tag_query = format!("#{}", tag.trim_start_matches('#'));
                                                 if !self.search_query.contains(&tag_query) {
                                                     let new_query = if self.search_query.is_empty() {
                                                         tag_query
@@ -1125,18 +1446,64 @@ impl FileManagerApp {
                                     });
                                 }
 
-                                // 路径
-                                let display_path = if entry_type == crate::file_entry::EntryType::WebLink {
-                                    entry.url.clone().unwrap_or_else(|| entry_path.to_string_lossy().to_string())
+                                // 集合子项目显示
+                                if entry_type == crate::file_entry::EntryType::Collection {
+                                    if !child_entries.is_empty() {
+                                        ui.add_space(4.0);
+                                        ui.small(format!("包含 {} 个项目:", child_entries.len()));
+                                        
+                                        for child_idx in &child_entries {
+                                            if let Some(child_entry) = self.entries.get(*child_idx) {
+                                                ui.horizontal(|ui| {
+                                                    ui.add_space(16.0);
+                                                    
+                                                    let child_icon = match child_entry.entry_type {
+                                                        crate::file_entry::EntryType::File => "📄",
+                                                        crate::file_entry::EntryType::Directory => "📁",
+                                                        crate::file_entry::EntryType::WebLink => "🌐",
+                                                        _ => "📋",
+                                                    };
+                                                    
+                                                    ui.small(format!("{} {}", child_icon, child_entry.name));
+                                                    
+                                                    if let Some(nickname) = &child_entry.nickname {
+                                                        ui.small(format!("({})", nickname));
+                                                    }
+                                                    
+                                                    if ui.small_button("✖").on_hover_text("从集合中移除").clicked() {
+                                                        remove_from_collection = Some((index, *child_idx));
+                                                    }
+                                                });
+                                            }
+                                        }
+                                        
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(16.0);
+                                            if ui.small_button("+ 添加更多项目").clicked() {
+                                                edit_collection = Some(index);
+                                            }
+                                        });
+                                    } else {
+                                        ui.add_space(4.0);
+                                        ui.small("空集合");
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(16.0);
+                                            if ui.small_button("+ 添加项目").clicked() {
+                                                edit_collection = Some(index);
+                                            }
+                                        });
+                                    }
                                 } else {
-                                    entry_path.to_string_lossy().to_string()
-                                };
-                                                
-                                if !display_path.is_empty() {
-                                    ui.small(
-                                        egui::RichText::new(format!("Path: {}", display_path))
-                                            .color(ModernTheme::weak_text_color(ui.ctx())),
-                                    );
+                                    // 非集合类型显示路径
+                                    let display_path = if entry_type == crate::file_entry::EntryType::WebLink {
+                                        entry.url.clone().unwrap_or_else(|| entry_path.to_string_lossy().to_string())
+                                    } else {
+                                        entry_path.to_string_lossy().to_string()
+                                    };
+
+                                    if !display_path.is_empty() {
+                                        ui.small(format!("Path: {}", display_path));
+                                    }
                                 }
                             });
 
@@ -1189,15 +1556,28 @@ impl FileManagerApp {
                 self.open_entry(entry);
             }
         }
-        if let Some(new_query) = search_update {
-            self.search_query = new_query;
-            self.force_update_filter();
-        }
-
-        // 删除功能已移到确认对话框中处理
-
         if let Some(index) = to_edit {
             self.edit_entry_tags(index);
+        }
+        if let Some(query) = search_update {
+            self.search_query = query;
+            self.force_update_filter();
+        }
+        if let Some((collection_idx, child_idx)) = remove_from_collection {
+            if let Some(collection) = self.entries.get_mut(collection_idx) {
+                collection.child_entries.retain(|&x| x != child_idx);
+                let _ = self.save_user_data();
+            }
+        }
+        if let Some(collection_idx) = edit_collection {
+            if let Some(collection_entry) = self.entries.get(collection_idx) {
+                self.editing_collection_index = Some(collection_idx);
+                self.collection_child_selection.clear();
+                for &child_idx in &collection_entry.child_entries {
+                    self.collection_child_selection.insert(child_idx);
+                }
+                self.show_collection_manager = true;
+            }
         }
     }
 
@@ -1206,12 +1586,13 @@ impl FileManagerApp {
         if url.is_empty() {
             return false;
         }
-        
+
         // 基本URL格式验证
-        if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://")) {
+        if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("ftp://"))
+        {
             return false;
         }
-        
+
         // 检查是否包含域名
         if let Some(domain_start) = url.find("://") {
             let remaining = &url[domain_start + 3..];
@@ -1222,7 +1603,7 @@ impl FileManagerApp {
             let domain_part = remaining.split('/').next().unwrap_or("");
             return domain_part.contains('.') && domain_part.len() > 3;
         }
-        
+
         false
     }
 
@@ -1503,16 +1884,16 @@ impl FileManagerApp {
                         ui.add_space(10.0);
                         ui.label("此操作无法撤销。");
                         ui.add_space(20.0);
-                        
+
                         ui.horizontal(|ui| {
                             if ui.button("取消").clicked() {
                                 self.show_delete_confirm = false;
                                 self.delete_entry_index = None;
                                 self.delete_entry_name.clear();
                             }
-                            
+
                             ui.add_space(20.0);
-                            
+
                             if ui.button("确认删除").clicked() {
                                 if let Some(index) = self.delete_entry_index {
                                     self.remove_entry(index);
@@ -1595,6 +1976,25 @@ impl eframe::App for FileManagerApp {
                     self.toggle_panel("tag_manager");
                 }
 
+                if ui.button("集合").clicked() {
+                    self.toggle_panel("collection_manager");
+                }
+                
+                // 批量选择模式切换
+                if ui.button(if self.batch_selection_mode { "退出选择" } else { "批量选择" }).clicked() {
+                    self.batch_selection_mode = !self.batch_selection_mode;
+                    if !self.batch_selection_mode {
+                        self.selected_entries.clear();
+                    }
+                }
+                
+                // 批量创建集合按钮（仅在选择模式且有选中项目时显示）
+                if self.batch_selection_mode && !self.selected_entries.is_empty() {
+                    if ui.button(format!("创建集合({})", self.selected_entries.len())).clicked() {
+                        self.toggle_panel("batch_collection_dialog");
+                    }
+                }
+
                 if ui.button("导入导出").clicked() {
                     self.toggle_panel("import_export");
                 }
@@ -1627,6 +2027,8 @@ impl eframe::App for FileManagerApp {
             || self.show_settings
             || self.show_import_export
             || self.show_tag_manager
+            || self.show_collection_manager
+            || self.show_batch_collection_dialog
         {
             egui::SidePanel::right("side")
                 .width_range(250.0..=300.0)
@@ -1640,6 +2042,10 @@ impl eframe::App for FileManagerApp {
                         self.render_import_export(ui);
                     } else if self.show_tag_manager {
                         self.render_tag_manager(ui);
+                    } else if self.show_collection_manager {
+                        self.render_collection_manager(ui);
+                    } else if self.show_batch_collection_dialog {
+                        self.render_batch_collection_dialog(ui);
                     } else if self.show_settings {
                         self.render_settings(ui);
                     }

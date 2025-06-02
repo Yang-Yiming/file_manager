@@ -51,7 +51,7 @@ fn main() -> Result<(), eframe::Error> {
     println!("正在初始化应用程序...");
 
     eframe::run_native(
-        "文件快速访问器 v0.2.3",
+        "文件快速访问器 v0.3.0",
         options,
         Box::new(|cc| {
             // 设置渲染选项

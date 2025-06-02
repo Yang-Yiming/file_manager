@@ -7,6 +7,7 @@ pub enum EntryType {
     File,
     Directory,
     WebLink,
+    Collection,
 }
 
 impl Default for EntryType {
@@ -25,6 +26,8 @@ pub struct FileEntry {
     #[serde(default)]
     pub entry_type: EntryType,
     pub url: Option<String>, // 网页链接地址
+    #[serde(default)]
+    pub child_entries: Vec<usize>, // 集合类型的子项目索引
     // 保持向后兼容性
     #[serde(default)]
     pub is_directory: bool,
@@ -52,6 +55,7 @@ impl FileEntry {
             tags,
             entry_type,
             url: None,
+            child_entries: Vec::new(),
             is_directory,
         }
     }
@@ -87,6 +91,7 @@ impl FileEntry {
             tags,
             entry_type,
             url: None,
+            child_entries: Vec::new(),
             is_directory,
         }
     }
@@ -107,11 +112,53 @@ impl FileEntry {
             tags,
             entry_type: EntryType::WebLink,
             url: Some(url),
+            child_entries: Vec::new(),
             is_directory: false,
         }
     }
 
+    /// 创建集合条目
+    pub fn new_collection(
+        name: String,
+        nickname: Option<String>,
+        description: Option<String>,
+        tags: Vec<String>,
+        child_entries: Vec<usize>,
+    ) -> Self {
+        Self {
+            path: PathBuf::from(format!("collection://{}", name)), // 虚拟路径
+            name,
+            nickname,
+            description,
+            tags,
+            entry_type: EntryType::Collection,
+            url: None,
+            child_entries,
+            is_directory: false,
+        }
+    }
 
+    /// 添加子项目到集合
+    #[allow(dead_code)]
+    pub fn add_child_entry(&mut self, entry_index: usize) {
+        if self.entry_type == EntryType::Collection && !self.child_entries.contains(&entry_index) {
+            self.child_entries.push(entry_index);
+        }
+    }
+
+    /// 从集合中移除子项目
+    #[allow(dead_code)]
+    pub fn remove_child_entry(&mut self, entry_index: usize) {
+        if self.entry_type == EntryType::Collection {
+            self.child_entries.retain(|&x| x != entry_index);
+        }
+    }
+
+    /// 获取子项目索引列表
+    #[allow(dead_code)]
+    pub fn get_child_entries(&self) -> &Vec<usize> {
+        &self.child_entries
+    }
 
     /// 将中文转换为拼音首字母
     fn to_pinyin_initials(text: &str) -> String {
