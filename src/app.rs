@@ -74,6 +74,7 @@ pub struct FileManagerApp {
     // 焦点和选中状态
     focused_entry: Option<usize>,
     search_has_focus: bool,
+    search_currently_focused: bool,
     multi_select_mode: bool,
 }
 
@@ -203,6 +204,7 @@ impl FileManagerApp {
             
             focused_entry: None,
             search_has_focus: false,
+            search_currently_focused: false,
             multi_select_mode: false,
         }
     }
@@ -1828,7 +1830,7 @@ impl FileManagerApp {
             };
 
             // Cmd/Ctrl+N: 添加新条目
-            if cmd && i.key_pressed(egui::Key::N) && !self.search_has_focus {
+            if cmd && i.key_pressed(egui::Key::N) && !self.search_currently_focused {
                 self.toggle_panel("add_dialog");
             }
 
@@ -1838,7 +1840,7 @@ impl FileManagerApp {
             }
 
             // Enter: 打开选中的条目
-            if i.key_pressed(egui::Key::Enter) && !self.search_has_focus {
+            if i.key_pressed(egui::Key::Enter) && !self.search_currently_focused {
                 if let Some(focused_idx) = self.focused_entry {
                     if let Some(entry) = self.entries.get(focused_idx) {
                         self.open_entry(entry);
@@ -1847,7 +1849,7 @@ impl FileManagerApp {
             }
 
             // Delete: 删除选中的条目
-            if i.key_pressed(egui::Key::Delete) && !self.search_has_focus {
+            if i.key_pressed(egui::Key::Delete) && !self.search_currently_focused {
                 if let Some(focused_idx) = self.focused_entry {
                     self.show_delete_confirm = true;
                     self.delete_entry_index = Some(focused_idx);
@@ -1858,7 +1860,7 @@ impl FileManagerApp {
             }
 
             // Cmd/Ctrl+E: 编辑选中的条目
-            if cmd && i.key_pressed(egui::Key::E) && !self.search_has_focus {
+            if cmd && i.key_pressed(egui::Key::E) && !self.search_currently_focused {
                 if let Some(focused_idx) = self.focused_entry {
                     self.edit_entry_tags(focused_idx);
                 }
@@ -1884,7 +1886,7 @@ impl FileManagerApp {
             }
 
             // 上下箭头键：选择条目
-            if !self.search_has_focus && !self.filtered_indices.is_empty() {
+            if !self.search_currently_focused && !self.filtered_indices.is_empty() {
                 if i.key_pressed(egui::Key::ArrowDown) {
                     if let Some(current) = self.focused_entry {
                         if let Some(pos) = self.filtered_indices.iter().position(|&x| x == current) {
@@ -2295,9 +2297,9 @@ impl eframe::App for FileManagerApp {
                     self.search_has_focus = false;
                 }
                 
-                // 检测搜索框是否有焦点
-                self.search_has_focus = search_response.has_focus();
-                if ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
+                // 检测搜索框当前是否有焦点，用于确定是否启用快捷键
+                self.search_currently_focused = search_response.has_focus();
+                if ui.ctx().input(|i| i.key_pressed(egui::Key::Enter) && self.search_currently_focused)
                     || self.search_query != self.last_search_query
                 {
                     self.force_update_filter();
