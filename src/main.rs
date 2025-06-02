@@ -24,8 +24,8 @@ fn main() -> Result<(), eframe::Error> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([700.0, 500.0])
-            .with_min_inner_size([600.0, 400.0])
+            .with_inner_size([900.0, 650.0])
+            .with_min_inner_size([750.0, 500.0])
             .with_resizable(true)
             .with_title_shown(true)
             .with_decorations(true)
@@ -51,7 +51,7 @@ fn main() -> Result<(), eframe::Error> {
     println!("正在初始化应用程序...");
 
     eframe::run_native(
-        "文件快速访问器 v0.3.0",
+        "文件快速访问器 v0.3.1",
         options,
         Box::new(|cc| {
             // 设置渲染选项

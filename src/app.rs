@@ -66,11 +66,15 @@ pub struct FileManagerApp {
     editing_collection_index: Option<usize>,
     collection_child_selection: HashSet<usize>,
     
-    // 批量选择相关
-    batch_selection_mode: bool,
+    // 多选相关
     selected_entries: HashSet<usize>,
     show_batch_collection_dialog: bool,
     batch_collection_name: String,
+    
+    // 焦点和选中状态
+    focused_entry: Option<usize>,
+    search_has_focus: bool,
+    multi_select_mode: bool,
 }
 
 impl Default for FileManagerApp {
@@ -193,10 +197,13 @@ impl FileManagerApp {
             editing_collection_index: None,
             collection_child_selection: HashSet::new(),
             
-            batch_selection_mode: false,
             selected_entries: HashSet::new(),
             show_batch_collection_dialog: false,
             batch_collection_name: String::new(),
+            
+            focused_entry: None,
+            search_has_focus: false,
+            multi_select_mode: false,
         }
     }
 
@@ -930,10 +937,10 @@ impl FileManagerApp {
 
                             let mut is_selected = self.collection_child_selection.contains(&idx);
                             let entry_icon = match entry.entry_type {
-                                crate::file_entry::EntryType::File => "📄",
-                                crate::file_entry::EntryType::Directory => "📁",
-                                crate::file_entry::EntryType::WebLink => "🌐",
-                                _ => "📋",
+                                crate::file_entry::EntryType::File => "[F]",
+                                crate::file_entry::EntryType::Directory => "[D]",
+                                crate::file_entry::EntryType::WebLink => "[L]",
+                                _ => "[?]",
                             };
 
                             ui.horizontal(|ui| {
@@ -981,10 +988,10 @@ impl FileManagerApp {
                     for &child_idx in &collection.child_entries {
                         if let Some(child_entry) = self.entries.get(child_idx) {
                             let entry_icon = match child_entry.entry_type {
-                                crate::file_entry::EntryType::File => "📄",
-                                crate::file_entry::EntryType::Directory => "📁",
-                                crate::file_entry::EntryType::WebLink => "🌐",
-                                _ => "📋",
+                                crate::file_entry::EntryType::File => "[F]",
+                                crate::file_entry::EntryType::Directory => "[D]",
+                                crate::file_entry::EntryType::WebLink => "[L]",
+                                _ => "[?]",
                             };
                             ui.label(format!("  {} {}", entry_icon, child_entry.name));
                         }
@@ -1007,10 +1014,10 @@ impl FileManagerApp {
                 for &idx in &self.selected_entries {
                     if let Some(entry) = self.entries.get(idx) {
                         let entry_icon = match entry.entry_type {
-                            crate::file_entry::EntryType::File => "📄",
-                            crate::file_entry::EntryType::Directory => "📁",
-                            crate::file_entry::EntryType::WebLink => "🌐",
-                            crate::file_entry::EntryType::Collection => "📋",
+                            crate::file_entry::EntryType::File => "[F]",
+                            crate::file_entry::EntryType::Directory => "[D]",
+                            crate::file_entry::EntryType::WebLink => "[L]",
+                            crate::file_entry::EntryType::Collection => "[C]",
                         };
                         ui.horizontal(|ui| {
                             ui.label(format!("{} {}", entry_icon, entry.name));
@@ -1045,7 +1052,7 @@ impl FileManagerApp {
                 // 清理状态
                 self.batch_collection_name.clear();
                 self.selected_entries.clear();
-                self.batch_selection_mode = false;
+                self.multi_select_mode = false;
                 self.show_batch_collection_dialog = false;
                 
                 // 更新过滤
@@ -1106,11 +1113,11 @@ impl FileManagerApp {
                 if !self.add_path_input.is_empty() && !self.is_valid_url(&self.add_path_input) {
                     ui.colored_label(
                         egui::Color32::from_rgb(200, 50, 50),
-                        "⚠ 请输入有效的URL地址",
+                        "请输入有效的URL地址",
                     );
                 } else if !self.add_path_input.is_empty() && self.is_valid_url(&self.add_path_input)
                 {
-                    ui.colored_label(egui::Color32::from_rgb(50, 150, 50), "✓ URL格式正确");
+                    ui.colored_label(egui::Color32::from_rgb(50, 150, 50), "URL格式正确");
                 }
             }
             crate::file_entry::EntryType::Collection => {
@@ -1312,218 +1319,449 @@ impl FileManagerApp {
 
                     if self.compact_mode && !is_expanded {
                         // 紧凑模式：单行显示
-                        ui.horizontal(|ui| {
-                            // 批量选择checkbox
-                            if self.batch_selection_mode {
-                                let mut is_selected = self.selected_entries.contains(&index);
-                                if ui.checkbox(&mut is_selected, "").changed() {
-                                    if is_selected {
-                                        self.selected_entries.insert(index);
-                                    } else {
-                                        self.selected_entries.remove(&index);
-                                    }
-                                }
-                            }
-                            
-                            // 展开按钮
-                            if ui.small_button("[+]").clicked() {
-                                to_expand = Some(index);
-                            }
-
-                            let icon = match entry_type {
-                                crate::file_entry::EntryType::Directory => "[DIR]",
-                                crate::file_entry::EntryType::WebLink => "[LINK]",
-                                crate::file_entry::EntryType::Collection => "[集合]",
-                                _ => "[FILE]",
-                            };
-                            ui.label(icon);
-
-                            // 文件名/昵称
-                            if let Some(nickname) = &entry_nickname {
-                                if ui.link(nickname).clicked() {
-                                    to_open = Some(index);
-                                }
+                        let is_focused = self.focused_entry == Some(index);
+                        let is_selected = self.selected_entries.contains(&index);
+                        let item_bg = if is_selected {
+                            if ui.ctx().style().visuals.dark_mode {
+                                egui::Color32::from_rgb(90, 90, 140)
                             } else {
-                                if ui.link(&entry_name).clicked() {
-                                    to_open = Some(index);
-                                }
+                                egui::Color32::from_rgb(160, 160, 250)
                             }
-
-                            // 标签（只显示第一个）
-                            if !hash_tags.is_empty() {
-                                ui.small(&hash_tags[0]);
-                                if hash_tags.len() > 1 {
-                                    ui.small(format!("+{}", hash_tags.len() - 1));
-                                }
+                        } else if is_focused {
+                            if ui.ctx().style().visuals.dark_mode {
+                                egui::Color32::from_rgb(60, 60, 80)
+                            } else {
+                                egui::Color32::from_rgb(220, 220, 240)
                             }
-
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.small_button("🗑").clicked() {
-                                        self.show_delete_confirm = true;
-                                        self.delete_entry_index = Some(index);
-                                        self.delete_entry_name =
-                                            if let Some(nickname) = &entry_nickname {
-                                                nickname.clone()
-                                            } else {
-                                                entry_name.clone()
-                                            };
-                                    }
-                                    if ui.small_button("✏").clicked() {
-                                        to_edit = Some(index);
-                                    }
-                                },
-                            );
-                        });
-                    } else {
-                        // 展开模式：多行显示
-                        ui.horizontal(|ui| {
-                            // 批量选择checkbox
-                            if self.batch_selection_mode {
-                                let mut is_selected = self.selected_entries.contains(&index);
-                                if ui.checkbox(&mut is_selected, "").changed() {
-                                    if is_selected {
-                                        self.selected_entries.insert(index);
-                                    } else {
-                                        self.selected_entries.remove(&index);
-                                    }
-                                }
-                            }
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        
+                        let item_frame = egui::Frame::none()
+                            .fill(item_bg)
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::same(4.0))
+                            .stroke(if is_selected {
+                                egui::Stroke::new(3.0, egui::Color32::from_rgb(80, 120, 200))
+                            } else if self.multi_select_mode {
+                                egui::Stroke::new(1.0, egui::Color32::from_gray(150))
+                            } else {
+                                egui::Stroke::NONE
+                            });
                             
-                            // 点击收起
-                            if is_expanded && ui.small_button("[-]").clicked() {
-                                to_collapse = Some(index);
-                            }
+                        let item_response = item_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // 多选模式下显示选择状态
+                                if self.multi_select_mode {
+                                    let mut checkbox_selected = is_selected;
+                                    if ui.checkbox(&mut checkbox_selected, "").changed() {
+                                        if checkbox_selected {
+                                            self.selected_entries.insert(index);
+                                        } else {
+                                            self.selected_entries.remove(&index);
+                                        }
+                                    }
+                                }
+                                
+                                // 展开按钮
+                                if ui.small_button("+").clicked() {
+                                    to_expand = Some(index);
+                                }
 
-                            // 文件图标
-                            let icon = match entry_type {
-                                crate::file_entry::EntryType::Directory => "[DIR]",
-                                crate::file_entry::EntryType::WebLink => "[LINK]",
-                                crate::file_entry::EntryType::Collection => "[集合]",
-                                _ => "[FILE]",
-                            };
-                            ui.label(icon);
-
-                            // 主要信息
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 2.0;
+                                let icon = match entry_type {
+                                    crate::file_entry::EntryType::Directory => "[D]",
+                                    crate::file_entry::EntryType::WebLink => "[L]",
+                                    crate::file_entry::EntryType::Collection => "[C]",
+                                    _ => "[F]",
+                                };
+                                ui.label(icon);
 
                                 // 文件名/昵称
                                 if let Some(nickname) = &entry_nickname {
                                     if ui.link(nickname).clicked() {
                                         to_open = Some(index);
                                     }
-                                    ui.small(&entry_name);
                                 } else {
                                     if ui.link(&entry_name).clicked() {
                                         to_open = Some(index);
                                     }
                                 }
 
-                                // 描述（如果有）
-                                if let Some(desc) = &entry_description {
-                                    ui.small(desc);
+                                // 标签（只显示第一个）
+                                if !hash_tags.is_empty() {
+                                    ui.small(&hash_tags[0]);
+                                    if hash_tags.len() > 1 {
+                                        ui.small(format!("+{}", hash_tags.len() - 1));
+                                    }
                                 }
 
-                                // 标签（完整显示）
-                                if !hash_tags.is_empty() {
-                                    ui.horizontal(|ui| {
-                                        ui.small("Tags:");
-                                        for tag in &hash_tags {
-                                            if ui.small_button(tag).clicked() {
-                                                let tag_query = format!("#{}", tag.trim_start_matches('#'));
-                                                if !self.search_query.contains(&tag_query) {
-                                                    let new_query = if self.search_query.is_empty() {
-                                                        tag_query
-                                                    } else {
-                                                        format!("{} {}", self.search_query, tag_query)
-                                                    };
-                                                    search_update = Some(new_query);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("×").clicked() {
+                                            self.show_delete_confirm = true;
+                                            self.delete_entry_index = Some(index);
+                                            self.delete_entry_name =
+                                                if let Some(nickname) = &entry_nickname {
+                                                    nickname.clone()
+                                                } else {
+                                                    entry_name.clone()
+                                                };
+                                        }
+                                        if ui.small_button("编辑").clicked() {
+                                            to_edit = Some(index);
+                                        }
+                                    },
+                                );
+                            })
+                        }).response;
+                        
+                        // 处理点击聚焦（多选模式下不处理，由checkbox控制）
+                        if item_response.clicked() && !self.multi_select_mode {
+                            self.focused_entry = Some(index);
+                        }
+                        
+                        // 右键菜单
+                        item_response.context_menu(|ui| {
+                            if self.multi_select_mode && !self.selected_entries.is_empty() {
+                                // 多选模式的右键菜单
+                                ui.label(format!("已选择 {} 个项目", self.selected_entries.len()));
+                                ui.separator();
+                                
+                                if ui.button("创建集合").clicked() {
+                                    self.batch_collection_name.clear();
+                                    self.show_batch_collection_dialog = true;
+                                    ui.close_menu();
+                                }
+                                
+                                if ui.button("删除选中项目").clicked() {
+                                    // 这里可以实现批量删除逻辑
+                                    ui.close_menu();
+                                }
+                                
+                                ui.separator();
+                                if ui.button("退出多选模式").clicked() {
+                                    self.multi_select_mode = false;
+                                    self.selected_entries.clear();
+                                    ui.close_menu();
+                                }
+                            } else {
+                                // 单选模式的右键菜单
+                                if ui.button("打开").clicked() {
+                                    to_open = Some(index);
+                                    ui.close_menu();
+                                }
+                                if ui.button("编辑").clicked() {
+                                    to_edit = Some(index);
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button("多选").clicked() {
+                                    self.multi_select_mode = true;
+                                    self.selected_entries.insert(index);
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button("删除").clicked() {
+                                    self.show_delete_confirm = true;
+                                    self.delete_entry_index = Some(index);
+                                    self.delete_entry_name = if let Some(nickname) = &entry_nickname {
+                                        nickname.clone()
+                                    } else {
+                                        entry_name.clone()
+                                    };
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    } else {
+                        // 展开模式：多行显示
+                        let is_focused = self.focused_entry == Some(index);
+                        let is_selected = self.selected_entries.contains(&index);
+                        let item_bg = if is_selected {
+                            if ui.ctx().style().visuals.dark_mode {
+                                egui::Color32::from_rgb(90, 90, 140)
+                            } else {
+                                egui::Color32::from_rgb(160, 160, 250)
+                            }
+                        } else if is_focused {
+                            if ui.ctx().style().visuals.dark_mode {
+                                egui::Color32::from_rgb(60, 60, 80)
+                            } else {
+                                egui::Color32::from_rgb(220, 220, 240)
+                            }
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        
+                        let item_frame = egui::Frame::none()
+                            .fill(item_bg)
+                            .rounding(egui::Rounding::same(6.0))
+                            .inner_margin(egui::Margin::same(6.0))
+                            .stroke(if is_selected {
+                                egui::Stroke::new(3.0, egui::Color32::from_rgb(80, 120, 200))
+                            } else if self.multi_select_mode {
+                                egui::Stroke::new(1.0, egui::Color32::from_gray(150))
+                            } else {
+                                egui::Stroke::NONE
+                            });
+                            
+                        let item_response = item_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // 多选模式下显示选择状态
+                                if self.multi_select_mode {
+                                    let mut checkbox_selected = is_selected;
+                                    if ui.checkbox(&mut checkbox_selected, "").changed() {
+                                        if checkbox_selected {
+                                            self.selected_entries.insert(index);
+                                        } else {
+                                            self.selected_entries.remove(&index);
+                                        }
+                                    }
+                                }
+                                
+                                // 点击收起
+                                if is_expanded && ui.small_button("-").clicked() {
+                                    to_collapse = Some(index);
+                                }
+
+                                // 文件图标
+                                let icon = match entry_type {
+                                    crate::file_entry::EntryType::Directory => "[D]",
+                                    crate::file_entry::EntryType::WebLink => "[L]",
+                                    crate::file_entry::EntryType::Collection => "[C]",
+                                    _ => "[F]",
+                                };
+                                ui.label(icon);
+
+                                // 主要信息
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+
+                                    // 文件名/昵称
+                                    if let Some(nickname) = &entry_nickname {
+                                        if ui.link(nickname).clicked() {
+                                            to_open = Some(index);
+                                        }
+                                        ui.small(&entry_name);
+                                    } else {
+                                        if ui.link(&entry_name).clicked() {
+                                            to_open = Some(index);
+                                        }
+                                    }
+
+                                    // 描述（如果有）
+                                    if let Some(desc) = &entry_description {
+                                        ui.small(desc);
+                                    }
+
+                                    // 标签（完整显示）
+                                    if !hash_tags.is_empty() {
+                                        ui.horizontal(|ui| {
+                                            ui.small("Tags:");
+                                            for tag in &hash_tags {
+                                                if ui.small_button(tag).clicked() {
+                                                    let tag_query = format!("#{}", tag.trim_start_matches('#'));
+                                                    if !self.search_query.contains(&tag_query) {
+                                                        let new_query = if self.search_query.is_empty() {
+                                                            tag_query
+                                                        } else {
+                                                            format!("{} {}", self.search_query, tag_query)
+                                                        };
+                                                        search_update = Some(new_query);
+                                                    }
                                                 }
                                             }
-                                        }
-                                    });
-                                }
+                                        });
+                                    }
 
-                                // 集合子项目显示
-                                if entry_type == crate::file_entry::EntryType::Collection {
-                                    if !child_entries.is_empty() {
-                                        ui.add_space(4.0);
-                                        ui.small(format!("包含 {} 个项目:", child_entries.len()));
+                                    // 集合子项目显示
+                                    if entry_type == crate::file_entry::EntryType::Collection {
+                                        ui.add_space(6.0);
                                         
-                                        for child_idx in &child_entries {
-                                            if let Some(child_entry) = self.entries.get(*child_idx) {
+                                        // 集合容器样式
+                                        let collection_bg = if ui.ctx().style().visuals.dark_mode {
+                                            egui::Color32::from_rgba_unmultiplied(60, 60, 70, 100)
+                                        } else {
+                                            egui::Color32::from_rgba_unmultiplied(240, 240, 245, 150)
+                                        };
+                                        
+                                        let collection_frame = egui::Frame::none()
+                                            .fill(collection_bg)
+                                            .rounding(egui::Rounding::same(6.0))
+                                            .inner_margin(egui::Margin::same(8.0))
+                                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(100)));
+                                        
+                                        collection_frame.show(ui, |ui| {
+                                            if !child_entries.is_empty() {
                                                 ui.horizontal(|ui| {
-                                                    ui.add_space(16.0);
-                                                    
-                                                    let child_icon = match child_entry.entry_type {
-                                                        crate::file_entry::EntryType::File => "📄",
-                                                        crate::file_entry::EntryType::Directory => "📁",
-                                                        crate::file_entry::EntryType::WebLink => "🌐",
-                                                        _ => "📋",
-                                                    };
-                                                    
-                                                    ui.small(format!("{} {}", child_icon, child_entry.name));
-                                                    
-                                                    if let Some(nickname) = &child_entry.nickname {
-                                                        ui.small(format!("({})", nickname));
+                                                    ui.label("集合:");
+                                                    ui.label(egui::RichText::new(format!("包含 {} 个项目", child_entries.len()))
+                                                        .size(12.0)
+                                                        .color(egui::Color32::from_gray(150)));
+                                                });
+                                                
+                                                ui.add_space(4.0);
+                                                
+                                                for (i, child_idx) in child_entries.iter().enumerate() {
+                                                    if let Some(child_entry) = self.entries.get(*child_idx) {
+                                                        ui.horizontal(|ui| {
+                                                            // 连接线
+                                                            if i == child_entries.len() - 1 {
+                                                                ui.label("└─");
+                                                            } else {
+                                                                ui.label("├─");
+                                                            }
+                                                            
+                                                            let child_icon = match child_entry.entry_type {
+                                                                crate::file_entry::EntryType::File => "[F]",
+                                                                crate::file_entry::EntryType::Directory => "[D]",
+                                                                crate::file_entry::EntryType::WebLink => "[L]",
+                                                                _ => "[?]",
+                                                            };
+                                                            
+                                                            // 可点击的子项目链接
+                                                            let child_response = ui.add(
+                                                                egui::Label::new(
+                                                                    egui::RichText::new(format!("{} {}", child_icon, child_entry.name))
+                                                                        .size(11.0)
+                                                                        .color(egui::Color32::from_rgb(100, 150, 200))
+                                                                ).sense(egui::Sense::click())
+                                                            );
+                                                            
+                                                            if child_response.clicked() {
+                                                                to_open = Some(*child_idx);
+                                                            }
+                                                            
+                                                            if let Some(nickname) = &child_entry.nickname {
+                                                                ui.label(egui::RichText::new(format!("({})", nickname))
+                                                                    .size(10.0)
+                                                                    .color(egui::Color32::from_gray(120)));
+                                                            }
+                                                            
+                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                                if ui.small_button("×").on_hover_text("从集合中移除").clicked() {
+                                                                    remove_from_collection = Some((index, *child_idx));
+                                                                }
+                                                            });
+                                                        });
                                                     }
-                                                    
-                                                    if ui.small_button("✖").on_hover_text("从集合中移除").clicked() {
-                                                        remove_from_collection = Some((index, *child_idx));
+                                                }
+                                                
+                                                ui.add_space(4.0);
+                                                ui.separator();
+                                                
+                                                ui.horizontal(|ui| {
+                                                    if ui.button("+ 添加更多").clicked() {
+                                                        edit_collection = Some(index);
                                                     }
                                                 });
-                                            }
-                                        }
-                                        
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(16.0);
-                                            if ui.small_button("+ 添加更多项目").clicked() {
-                                                edit_collection = Some(index);
+                                            } else {
+                                                ui.horizontal(|ui| {
+                                                    ui.label("集合:");
+                                                    ui.label(egui::RichText::new("空集合")
+                                                        .size(12.0)
+                                                        .color(egui::Color32::from_gray(150)));
+                                                });
+                                                
+                                                ui.add_space(4.0);
+                                                
+                                                if ui.button("+ 添加项目").clicked() {
+                                                    edit_collection = Some(index);
+                                                }
                                             }
                                         });
                                     } else {
-                                        ui.add_space(4.0);
-                                        ui.small("空集合");
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(16.0);
-                                            if ui.small_button("+ 添加项目").clicked() {
-                                                edit_collection = Some(index);
-                                            }
-                                        });
-                                    }
-                                } else {
-                                    // 非集合类型显示路径
-                                    let display_path = if entry_type == crate::file_entry::EntryType::WebLink {
-                                        entry.url.clone().unwrap_or_else(|| entry_path.to_string_lossy().to_string())
-                                    } else {
-                                        entry_path.to_string_lossy().to_string()
-                                    };
-
-                                    if !display_path.is_empty() {
-                                        ui.small(format!("Path: {}", display_path));
-                                    }
-                                }
-                            });
-
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.small_button("🗑").clicked() {
-                                        self.show_delete_confirm = true;
-                                        self.delete_entry_index = Some(index);
-                                        self.delete_entry_name = if let Some(nickname) = &entry_nickname {
-                                            nickname.clone()
+                                        // 非集合类型显示路径
+                                        let display_path = if entry_type == crate::file_entry::EntryType::WebLink {
+                                            entry.url.clone().unwrap_or_else(|| entry_path.to_string_lossy().to_string())
                                         } else {
-                                            entry_name.clone()
+                                            entry_path.to_string_lossy().to_string()
                                         };
+
+                                        if !display_path.is_empty() {
+                                            ui.small(format!("Path: {}", display_path));
+                                        }
                                     }
-                                    if ui.small_button("✏").clicked() {
-                                        to_edit = Some(index);
-                                    }
-                                },
-                            );
+                                });
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("×").clicked() {
+                                            self.show_delete_confirm = true;
+                                            self.delete_entry_index = Some(index);
+                                            self.delete_entry_name = if let Some(nickname) = &entry_nickname {
+                                                nickname.clone()
+                                            } else {
+                                                entry_name.clone()
+                                            };
+                                        }
+                                        if ui.small_button("编辑").clicked() {
+                                            to_edit = Some(index);
+                                        }
+                                    },
+                                );
+                            })
+                        }).response;
+                        
+                        // 处理点击聚焦（多选模式下不处理，由checkbox控制）
+                        if item_response.clicked() && !self.multi_select_mode {
+                            self.focused_entry = Some(index);
+                        }
+                        
+                        // 右键菜单
+                        item_response.context_menu(|ui| {
+                            if self.multi_select_mode && !self.selected_entries.is_empty() {
+                                // 多选模式的右键菜单
+                                ui.label(format!("已选择 {} 个项目", self.selected_entries.len()));
+                                ui.separator();
+                                
+                                if ui.button("创建集合").clicked() {
+                                    self.batch_collection_name.clear();
+                                    self.show_batch_collection_dialog = true;
+                                    ui.close_menu();
+                                }
+                                
+                                if ui.button("删除选中项目").clicked() {
+                                    // 这里可以实现批量删除逻辑
+                                    ui.close_menu();
+                                }
+                                
+                                ui.separator();
+                                if ui.button("退出多选模式").clicked() {
+                                    self.multi_select_mode = false;
+                                    self.selected_entries.clear();
+                                    ui.close_menu();
+                                }
+                            } else {
+                                // 单选模式的右键菜单
+                                if ui.button("打开").clicked() {
+                                    to_open = Some(index);
+                                    ui.close_menu();
+                                }
+                                if ui.button("编辑").clicked() {
+                                    to_edit = Some(index);
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button("多选").clicked() {
+                                    self.multi_select_mode = true;
+                                    self.selected_entries.insert(index);
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button("删除").clicked() {
+                                    self.show_delete_confirm = true;
+                                    self.delete_entry_index = Some(index);
+                                    self.delete_entry_name = if let Some(nickname) = &entry_nickname {
+                                        nickname.clone()
+                                    } else {
+                                        entry_name.clone()
+                                    };
+                                    ui.close_menu();
+                                }
+                            }
                         });
                     }
 
@@ -1579,6 +1817,99 @@ impl FileManagerApp {
                 self.show_collection_manager = true;
             }
         }
+    }
+
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            let cmd = if cfg!(target_os = "macos") {
+                i.modifiers.mac_cmd
+            } else {
+                i.modifiers.ctrl
+            };
+
+            // Cmd/Ctrl+N: 添加新条目
+            if cmd && i.key_pressed(egui::Key::N) && !self.search_has_focus {
+                self.toggle_panel("add_dialog");
+            }
+
+            // Cmd/Ctrl+F: 聚焦搜索框
+            if cmd && i.key_pressed(egui::Key::F) {
+                self.search_has_focus = true;
+            }
+
+            // Enter: 打开选中的条目
+            if i.key_pressed(egui::Key::Enter) && !self.search_has_focus {
+                if let Some(focused_idx) = self.focused_entry {
+                    if let Some(entry) = self.entries.get(focused_idx) {
+                        self.open_entry(entry);
+                    }
+                }
+            }
+
+            // Delete: 删除选中的条目
+            if i.key_pressed(egui::Key::Delete) && !self.search_has_focus {
+                if let Some(focused_idx) = self.focused_entry {
+                    self.show_delete_confirm = true;
+                    self.delete_entry_index = Some(focused_idx);
+                    if let Some(entry) = self.entries.get(focused_idx) {
+                        self.delete_entry_name = entry.nickname.clone().unwrap_or_else(|| entry.name.clone());
+                    }
+                }
+            }
+
+            // Cmd/Ctrl+E: 编辑选中的条目
+            if cmd && i.key_pressed(egui::Key::E) && !self.search_has_focus {
+                if let Some(focused_idx) = self.focused_entry {
+                    self.edit_entry_tags(focused_idx);
+                }
+            }
+
+            // Escape: 退出当前模式/关闭对话框
+            if i.key_pressed(egui::Key::Escape) {
+                if self.multi_select_mode {
+                    self.multi_select_mode = false;
+                    self.selected_entries.clear();
+                } else if self.show_add_dialog || self.show_tag_editor || self.show_settings || 
+                         self.show_import_export || self.show_tag_manager || self.show_collection_manager ||
+                         self.show_batch_collection_dialog {
+                    self.show_add_dialog = false;
+                    self.show_tag_editor = false;
+                    self.show_settings = false;
+                    self.show_import_export = false;
+                    self.show_tag_manager = false;
+                    self.show_collection_manager = false;
+                    self.show_batch_collection_dialog = false;
+                }
+                self.search_has_focus = false;
+            }
+
+            // 上下箭头键：选择条目
+            if !self.search_has_focus && !self.filtered_indices.is_empty() {
+                if i.key_pressed(egui::Key::ArrowDown) {
+                    if let Some(current) = self.focused_entry {
+                        if let Some(pos) = self.filtered_indices.iter().position(|&x| x == current) {
+                            if pos + 1 < self.filtered_indices.len() {
+                                self.focused_entry = Some(self.filtered_indices[pos + 1]);
+                            }
+                        }
+                    } else if !self.filtered_indices.is_empty() {
+                        self.focused_entry = Some(self.filtered_indices[0]);
+                    }
+                }
+                
+                if i.key_pressed(egui::Key::ArrowUp) {
+                    if let Some(current) = self.focused_entry {
+                        if let Some(pos) = self.filtered_indices.iter().position(|&x| x == current) {
+                            if pos > 0 {
+                                self.focused_entry = Some(self.filtered_indices[pos - 1]);
+                            }
+                        }
+                    } else if !self.filtered_indices.is_empty() {
+                        self.focused_entry = Some(self.filtered_indices[self.filtered_indices.len() - 1]);
+                    }
+                }
+            }
+        });
     }
 
     /// 验证URL格式
@@ -1918,6 +2249,9 @@ impl eframe::App for FileManagerApp {
         // 应用主题
         self.apply_theme(ctx);
 
+        // 处理快捷键
+        self.handle_shortcuts(ctx);
+
         // 处理拖拽文件
         ctx.input(|i| {
             for file in &i.raw.dropped_files {
@@ -1949,11 +2283,20 @@ impl eframe::App for FileManagerApp {
 
                 // 统一搜索框（支持文件名、标签和描述）
                 ui.label("搜索:");
-                ui.add_sized(
-                    [250.0, 20.0],
+                let search_response = ui.add_sized(
+                    [200.0, 20.0],
                     egui::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("搜索文件、标签..."),
+                        .hint_text("搜索文件、标签...")
                 );
+                
+                // 处理搜索框焦点
+                if self.search_has_focus {
+                    search_response.request_focus();
+                    self.search_has_focus = false;
+                }
+                
+                // 检测搜索框是否有焦点
+                self.search_has_focus = search_response.has_focus();
                 if ui.ctx().input(|i| i.key_pressed(egui::Key::Enter))
                     || self.search_query != self.last_search_query
                 {
@@ -1967,41 +2310,62 @@ impl eframe::App for FileManagerApp {
 
                 ui.separator();
 
-                // 简洁的按钮组
-                if ui.button("添加").clicked() {
-                    self.toggle_panel("add_dialog");
-                }
+                ui.horizontal_wrapped(|ui| {
+                    // 主要功能按钮
+                    if ui.button("添加").clicked() {
+                        self.toggle_panel("add_dialog");
+                    }
 
-                if ui.button("标签").clicked() {
-                    self.toggle_panel("tag_manager");
-                }
+                    if ui.button("标签").clicked() {
+                        self.toggle_panel("tag_manager");
+                    }
 
-                if ui.button("集合").clicked() {
-                    self.toggle_panel("collection_manager");
+                    if ui.button("集合").clicked() {
+                        self.toggle_panel("collection_manager");
+                    }
+
+                    if ui.button("导入导出").clicked() {
+                        self.toggle_panel("import_export");
+                    }
+
+                    if ui.button("设置").clicked() {
+                        self.toggle_panel("settings");
+                    }
+                });
+
+                // 显示多选状态和批量操作
+                if self.multi_select_mode {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(100, 150, 200),
+                            format!("多选模式 - 已选择 {} 个项目", self.selected_entries.len())
+                        );
+                        
+                        if !self.selected_entries.is_empty() {
+                            if ui.button("创建集合").clicked() {
+                                self.batch_collection_name.clear();
+                                self.toggle_panel("batch_collection_dialog");
+                            }
+                        }
+                        
+                        if ui.button("退出多选").clicked() {
+                            self.selected_entries.clear();
+                            self.multi_select_mode = false;
+                        }
+                    });
                 }
                 
-                // 批量选择模式切换
-                if ui.button(if self.batch_selection_mode { "退出选择" } else { "批量选择" }).clicked() {
-                    self.batch_selection_mode = !self.batch_selection_mode;
-                    if !self.batch_selection_mode {
-                        self.selected_entries.clear();
+                // 快捷键提示（在底部）
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let cmd_key = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+                    if self.multi_select_mode {
+                        ui.small("多选模式：点击项目切换选择状态，右键查看批量操作");
+                    } else {
+                        ui.small(format!("右键多选 {}+N:添加 {}+F:搜索", cmd_key, cmd_key));
                     }
-                }
-                
-                // 批量创建集合按钮（仅在选择模式且有选中项目时显示）
-                if self.batch_selection_mode && !self.selected_entries.is_empty() {
-                    if ui.button(format!("创建集合({})", self.selected_entries.len())).clicked() {
-                        self.toggle_panel("batch_collection_dialog");
-                    }
-                }
-
-                if ui.button("导入导出").clicked() {
-                    self.toggle_panel("import_export");
-                }
-
-                if ui.button("设置").clicked() {
-                    self.toggle_panel("settings");
-                }
+                });
 
                 // 关闭侧边栏按钮
                 if self.show_add_dialog
