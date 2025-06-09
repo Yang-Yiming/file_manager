@@ -85,7 +85,39 @@ impl Default for FileManagerApp {
 }
 
 impl FileManagerApp {
-    fn toggle_panel(&mut self, panel_name: &str) {
+    /// 迁移旧的索引系统到新的ID系统
+    fn migrate_entries_to_id_system(entries: &mut Vec<FileEntry>) {
+        // 第一步：确保所有条目都有ID
+        for entry in entries.iter_mut() {
+            if entry.id.is_empty() {
+                entry.id = uuid::Uuid::new_v4().to_string();
+            }
+        }
+        
+        // 第二步：迁移集合的子项目引用从索引到ID
+        let mut collections_to_migrate = Vec::new();
+        for (i, entry) in entries.iter().enumerate() {
+            if entry.entry_type == crate::file_entry::EntryType::Collection && entry.has_legacy_child_entries() {
+                collections_to_migrate.push(i);
+            }
+        }
+        
+        for collection_idx in collections_to_migrate {
+            let legacy_indices = entries[collection_idx].get_legacy_child_entries().clone();
+            let mut new_child_ids = Vec::new();
+            
+            for &legacy_index in &legacy_indices {
+                if legacy_index < entries.len() {
+                    new_child_ids.push(entries[legacy_index].id.clone());
+                }
+            }
+            
+            entries[collection_idx].child_entries = new_child_ids;
+            entries[collection_idx].clear_legacy_child_entries();
+        }
+    }
+
+    fn toggle_panel(&mut self, panel: &str) {
         // 关闭所有面板
         self.show_add_dialog = false;
         self.show_tag_editor = false;
@@ -96,7 +128,7 @@ impl FileManagerApp {
         self.show_batch_collection_dialog = false;
 
         // 打开指定面板
-        match panel_name {
+        match panel {
             "add_dialog" => self.show_add_dialog = true,
             "tag_editor" => self.show_tag_editor = true,
             "settings" => self.show_settings = true,
@@ -129,7 +161,10 @@ impl FileManagerApp {
         };
 
         let user_data = data_manager.load_data().unwrap_or_default();
-        let entries = user_data.entries.clone();
+        let mut entries = user_data.entries.clone();
+        
+        // 执行数据迁移：为旧数据添加ID，转换集合的索引引用为ID引用
+        Self::migrate_entries_to_id_system(&mut entries);
 
         let mut all_tags = HashSet::new();
         for entry in &entries {
@@ -344,13 +379,18 @@ impl FileManagerApp {
                 )
             }
             crate::file_entry::EntryType::Collection => {
-                let child_entries: Vec<usize> = self.collection_child_selection.iter().cloned().collect();
+                let mut child_entry_ids = Vec::new();
+                for &idx in &self.collection_child_selection {
+                    if let Some(entry) = self.entries.get(idx) {
+                        child_entry_ids.push(entry.id.clone());
+                    }
+                }
                 FileEntry::new_collection(
                     self.add_name_input.clone(),
                     nickname,
                     description,
                     tags.clone(),
-                    child_entries,
+                    child_entry_ids,
                 )
             }
             _ => {
@@ -404,7 +444,15 @@ impl FileManagerApp {
 
     fn remove_entry(&mut self, index: usize) {
         if index < self.entries.len() {
-            let _removed_entry = self.entries.remove(index);
+            let removed_entry = self.entries.remove(index);
+            let removed_id = removed_entry.id.clone();
+
+            // 从所有集合中移除对此条目的引用
+            for entry in &mut self.entries {
+                if entry.entry_type == crate::file_entry::EntryType::Collection {
+                    entry.child_entries.retain(|id| id != &removed_id);
+                }
+            }
 
             // 更新标签集合，移除不再使用的标签
             self.rebuild_tag_set();
@@ -476,10 +524,9 @@ impl FileManagerApp {
     }
 
     fn open_collection(&self, collection: &FileEntry) {
-        // 依次打开集合中的所有子项目
-        for &child_index in &collection.child_entries {
-            if child_index < self.entries.len() {
-                let child_entry = &self.entries[child_index];
+        // 依次打开集合中的所有子项目，现在使用ID而不是索引
+        for child_id in &collection.child_entries {
+            if let Some(child_entry) = self.entries.iter().find(|e| &e.id == child_id) {
                 self.open_entry(child_entry);
 
                 // 在打开多个项目之间添加短暂延迟，避免系统过载
@@ -907,10 +954,13 @@ impl FileManagerApp {
                     );
                     if response.clicked() {
                         self.editing_collection_index = Some(*index);
-                        // 初始化子项选择状态
+                        // 初始化子项选择状态，现在使用ID而不是索引
                         self.collection_child_selection.clear();
-                        for &child_idx in &entry.child_entries {
-                            self.collection_child_selection.insert(child_idx);
+                        for child_id in &entry.child_entries {
+                            // 找到对应ID的条目索引
+                            if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
+                                self.collection_child_selection.insert(child_idx);
+                            }
                         }
                     }
                 }
@@ -965,11 +1015,15 @@ impl FileManagerApp {
 
                 ui.horizontal(|ui| {
                     if ui.button("保存集合").clicked() {
-                        // 更新集合的子项目
+                        // 更新集合的子项目，现在使用ID而不是索引
+                        let mut child_ids = Vec::new();
+                        for &selected_idx in &self.collection_child_selection {
+                            if let Some(entry) = self.entries.get(selected_idx) {
+                                child_ids.push(entry.id.clone());
+                            }
+                        }
                         if let Some(collection) = self.entries.get_mut(collection_idx) {
-                            collection.child_entries =
-                                self.collection_child_selection.iter().cloned().collect();
-                            collection.child_entries.sort(); // 保持索引有序
+                            collection.child_entries = child_ids;
                             let _ = self.save_user_data();
                         }
                     }
@@ -987,8 +1041,9 @@ impl FileManagerApp {
                         "当前集合包含 {} 个项目:",
                         collection.child_entries.len()
                     ));
-                    for &child_idx in &collection.child_entries {
-                        if let Some(child_entry) = self.entries.get(child_idx) {
+                    for child_id in &collection.child_entries {
+                        // 通过ID查找对应的条目
+                        if let Some(child_entry) = self.entries.iter().find(|e| &e.id == child_id) {
                             let entry_icon = match child_entry.entry_type {
                                 crate::file_entry::EntryType::File => "[F]",
                                 crate::file_entry::EntryType::Directory => "[D]",
@@ -996,6 +1051,9 @@ impl FileManagerApp {
                                 _ => "[?]",
                             };
                             ui.label(format!("  {} {}", entry_icon, child_entry.name));
+                        } else {
+                            // 如果找不到对应的条目，说明可能已被删除
+                            ui.label(format!("  [已删除] ID: {}", child_id));
                         }
                     }
                 }
@@ -1038,14 +1096,19 @@ impl FileManagerApp {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if ui.button("创建集合").clicked() && !self.batch_collection_name.is_empty() {
-                // 创建新集合
-                let child_entries: Vec<usize> = self.selected_entries.iter().cloned().collect();
+                // 创建新集合，现在使用ID而不是索引
+                let mut child_entry_ids = Vec::new();
+                for &idx in &self.selected_entries {
+                    if let Some(entry) = self.entries.get(idx) {
+                        child_entry_ids.push(entry.id.clone());
+                    }
+                }
                 let collection = FileEntry::new_collection(
                     self.batch_collection_name.clone(),
                     None,
                     None,
                     Vec::new(),
-                    child_entries,
+                    child_entry_ids,
                 );
                 
                 self.entries.push(collection);
@@ -1605,8 +1668,8 @@ impl FileManagerApp {
                                                 
                                                 ui.add_space(4.0);
                                                 
-                                                for (i, child_idx) in child_entries.iter().enumerate() {
-                                                    if let Some(child_entry) = self.entries.get(*child_idx) {
+                                                for (i, child_id) in child_entries.iter().enumerate() {
+                                                    if let Some(child_entry) = self.entries.iter().find(|e| &e.id == child_id) {
                                                         ui.horizontal(|ui| {
                                                             // 连接线
                                                             if i == child_entries.len() - 1 {
@@ -1632,7 +1695,9 @@ impl FileManagerApp {
                                                             );
                                                             
                                                             if child_response.clicked() {
-                                                                to_open = Some(*child_idx);
+                                                                if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
+                                                                    to_open = Some(child_idx);
+                                                                }
                                                             }
                                                             
                                                             if let Some(nickname) = &child_entry.nickname {
@@ -1643,7 +1708,9 @@ impl FileManagerApp {
                                                             
                                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                                 if ui.small_button("×").on_hover_text("从集合中移除").clicked() {
-                                                                    remove_from_collection = Some((index, *child_idx));
+                                                                    if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
+                                                                        remove_from_collection = Some((index, child_idx));
+                                                                    }
                                                                 }
                                                             });
                                                         });
@@ -1804,17 +1871,23 @@ impl FileManagerApp {
             self.force_update_filter();
         }
         if let Some((collection_idx, child_idx)) = remove_from_collection {
-            if let Some(collection) = self.entries.get_mut(collection_idx) {
-                collection.child_entries.retain(|&x| x != child_idx);
-                let _ = self.save_user_data();
+            // 先获取子项目的ID，避免借用冲突
+            if let Some(child_entry) = self.entries.get(child_idx) {
+                let child_id = child_entry.id.clone();
+                if let Some(collection) = self.entries.get_mut(collection_idx) {
+                    collection.child_entries.retain(|x| x != &child_id);
+                    let _ = self.save_user_data();
+                }
             }
         }
         if let Some(collection_idx) = edit_collection {
             if let Some(collection_entry) = self.entries.get(collection_idx) {
                 self.editing_collection_index = Some(collection_idx);
                 self.collection_child_selection.clear();
-                for &child_idx in &collection_entry.child_entries {
-                    self.collection_child_selection.insert(child_idx);
+                for child_id in &collection_entry.child_entries {
+                    if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
+                        self.collection_child_selection.insert(child_idx);
+                    }
                 }
                 self.show_collection_manager = true;
             }

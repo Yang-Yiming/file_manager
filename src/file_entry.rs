@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use pinyin::ToPinyin;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum EntryType {
@@ -27,10 +28,16 @@ pub struct FileEntry {
     pub entry_type: EntryType,
     pub url: Option<String>, // 网页链接地址
     #[serde(default)]
-    pub child_entries: Vec<usize>, // 集合类型的子项目索引
+    pub child_entries: Vec<String>, // 集合类型的子项目ID
     // 保持向后兼容性
     #[serde(default)]
     pub is_directory: bool,
+    // 新增唯一ID字段
+    #[serde(default = "generate_id")]
+    pub id: String,
+    // 向后兼容的旧格式索引
+    #[serde(default)]
+    pub legacy_child_entries: Vec<usize>,
 }
 
 impl FileEntry {
@@ -57,6 +64,8 @@ impl FileEntry {
             url: None,
             child_entries: Vec::new(),
             is_directory,
+            id: generate_id(),
+            legacy_child_entries: Vec::new(),
         }
     }
 
@@ -66,6 +75,27 @@ impl FileEntry {
         if self.entry_type == EntryType::File && self.is_directory {
             self.entry_type = EntryType::Directory;
         }
+        
+        // 如果没有ID，生成一个新的
+        if self.id.is_empty() {
+            self.id = generate_id();
+        }
+        
+        // 保存旧的索引引用以便后续迁移
+        if !self.child_entries.is_empty() && self.legacy_child_entries.is_empty() {
+            // 如果child_entries包含的是数字字符串，说明是从索引转换来的
+            let mut legacy_indices = Vec::new();
+            for child_id in &self.child_entries {
+                if let Ok(index) = child_id.parse::<usize>() {
+                    legacy_indices.push(index);
+                }
+            }
+            if !legacy_indices.is_empty() {
+                self.legacy_child_entries = legacy_indices;
+                self.child_entries.clear(); // 清空，等待ID迁移
+            }
+        }
+        
         self
     }
 
@@ -93,6 +123,8 @@ impl FileEntry {
             url: None,
             child_entries: Vec::new(),
             is_directory,
+            id: generate_id(),
+            legacy_child_entries: Vec::new(),
         }
     }
 
@@ -114,6 +146,8 @@ impl FileEntry {
             url: Some(url),
             child_entries: Vec::new(),
             is_directory: false,
+            id: generate_id(),
+            legacy_child_entries: Vec::new(),
         }
     }
 
@@ -123,7 +157,7 @@ impl FileEntry {
         nickname: Option<String>,
         description: Option<String>,
         tags: Vec<String>,
-        child_entries: Vec<usize>,
+        child_entry_ids: Vec<String>,
     ) -> Self {
         Self {
             path: PathBuf::from(format!("collection://{}", name)), // 虚拟路径
@@ -133,31 +167,58 @@ impl FileEntry {
             tags,
             entry_type: EntryType::Collection,
             url: None,
-            child_entries,
+            child_entries: child_entry_ids,
             is_directory: false,
+            id: generate_id(),
+            legacy_child_entries: Vec::new(),
         }
     }
 
-    /// 添加子项目到集合
+    /// 添加子项目到集合（使用ID）
     #[allow(dead_code)]
-    pub fn add_child_entry(&mut self, entry_index: usize) {
-        if self.entry_type == EntryType::Collection && !self.child_entries.contains(&entry_index) {
-            self.child_entries.push(entry_index);
+    pub fn add_child_entry(&mut self, entry_id: &str) {
+        if self.entry_type == EntryType::Collection && !self.child_entries.contains(&entry_id.to_string()) {
+            self.child_entries.push(entry_id.to_string());
         }
     }
 
-    /// 从集合中移除子项目
+    /// 从集合中移除子项目（使用ID）
     #[allow(dead_code)]
-    pub fn remove_child_entry(&mut self, entry_index: usize) {
+    pub fn remove_child_entry(&mut self, entry_id: &str) {
         if self.entry_type == EntryType::Collection {
-            self.child_entries.retain(|&x| x != entry_index);
+            self.child_entries.retain(|x| x != entry_id);
         }
     }
 
-    /// 获取子项目索引列表
+    /// 获取子项目ID列表
     #[allow(dead_code)]
-    pub fn get_child_entries(&self) -> &Vec<usize> {
+    pub fn get_child_entries(&self) -> &Vec<String> {
         &self.child_entries
+    }
+
+    /// 获取条目的唯一ID
+    pub fn get_id(&self) -> &str {
+        &self.id
+    }
+
+    /// 设置条目的ID（仅用于迁移）
+    pub fn set_id(&mut self, id: String) {
+        self.id = id;
+    }
+
+    /// 检查是否有需要迁移的旧索引数据
+    pub fn has_legacy_child_entries(&self) -> bool {
+        !self.legacy_child_entries.is_empty()
+    }
+
+    /// 获取需要迁移的旧索引数据
+    pub fn get_legacy_child_entries(&self) -> &Vec<usize> {
+        &self.legacy_child_entries
+    }
+
+    /// 清除已迁移的旧索引数据
+    pub fn clear_legacy_child_entries(&mut self) {
+        self.legacy_child_entries.clear();
     }
 
     /// 将中文转换为拼音首字母
@@ -287,4 +348,9 @@ impl FileEntry {
         
         (hash_tags, path_tags)
     }
+}
+
+/// 生成唯一ID
+fn generate_id() -> String {
+    Uuid::new_v4().to_string()
 }

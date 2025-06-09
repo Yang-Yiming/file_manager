@@ -6,6 +6,9 @@ mod file_entry;
 mod fonts;
 mod theme;
 
+#[cfg(test)]
+mod test_id_system;
+
 use eframe::egui;
 
 fn main() -> Result<(), eframe::Error> {
