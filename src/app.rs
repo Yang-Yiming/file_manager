@@ -786,7 +786,14 @@ impl FileManagerApp {
     }
 
     fn render_import_export(&mut self, ui: &mut egui::Ui) {
-        ui.heading("数据导入导出");
+        ui.horizontal(|ui| {
+            ui.heading("数据导入导出");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_import_export = false;
+                }
+            });
+        });
         ui.separator();
 
         ui.label("导出数据:");
@@ -854,7 +861,14 @@ impl FileManagerApp {
     }
 
     fn render_tag_manager(&mut self, ui: &mut egui::Ui) {
-        ui.heading("标签管理");
+        ui.horizontal(|ui| {
+            ui.heading("标签管理");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_tag_manager = false;
+                }
+            });
+        });
         ui.separator();
 
         let stats = self.get_tag_usage_stats();
@@ -919,7 +933,14 @@ impl FileManagerApp {
     }
 
     fn render_collection_manager(&mut self, ui: &mut egui::Ui) {
-        ui.heading("集合管理器");
+        ui.horizontal(|ui| {
+            ui.heading("集合管理器");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_collection_manager = false;
+                }
+            });
+        });
         ui.separator();
 
         // 选择要编辑的集合
@@ -1062,7 +1083,14 @@ impl FileManagerApp {
     }
 
     fn render_batch_collection_dialog(&mut self, ui: &mut egui::Ui) {
-        ui.heading("批量创建集合");
+        ui.horizontal(|ui| {
+            ui.heading("批量创建集合");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_batch_collection_dialog = false;
+                }
+            });
+        });
         ui.separator();
 
         ui.label(format!("将要创建包含 {} 个项目的集合:", self.selected_entries.len()));
@@ -1132,7 +1160,14 @@ impl FileManagerApp {
     }
 
     fn render_add_dialog(&mut self, ui: &mut egui::Ui) {
-        ui.heading("添加条目");
+        ui.horizontal(|ui| {
+            ui.heading("添加条目");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_add_dialog = false;
+                }
+            });
+        });
         ui.separator();
 
         // 条目类型选择
@@ -1313,7 +1348,14 @@ impl FileManagerApp {
     }
 
     fn render_tag_editor(&mut self, ui: &mut egui::Ui) {
-        ui.heading("编辑标签");
+        ui.horizontal(|ui| {
+            ui.heading("编辑标签");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_tag_editor = false;
+                }
+            });
+        });
         ui.separator();
 
         if let Some(index) = self.editing_entry_index {
@@ -1677,14 +1719,14 @@ impl FileManagerApp {
                                                             } else {
                                                                 ui.label("├─");
                                                             }
-                                                            
+                                                
                                                             let child_icon = match child_entry.entry_type {
                                                                 crate::file_entry::EntryType::File => "[F]",
                                                                 crate::file_entry::EntryType::Directory => "[D]",
                                                                 crate::file_entry::EntryType::WebLink => "[L]",
                                                                 _ => "[?]",
                                                             };
-                                                            
+                                                
                                                             // 可点击的子项目链接
                                                             let child_response = ui.add(
                                                                 egui::Label::new(
@@ -1693,26 +1735,31 @@ impl FileManagerApp {
                                                                         .color(egui::Color32::from_rgb(100, 150, 200))
                                                                 ).sense(egui::Sense::click())
                                                             );
-                                                            
+                                                
                                                             if child_response.clicked() {
                                                                 if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
                                                                     to_open = Some(child_idx);
                                                                 }
                                                             }
-                                                            
+                                                
                                                             if let Some(nickname) = &child_entry.nickname {
                                                                 ui.label(egui::RichText::new(format!("({})", nickname))
                                                                     .size(10.0)
                                                                     .color(egui::Color32::from_gray(120)));
                                                             }
-                                                            
-                                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                                if ui.small_button("×").on_hover_text("从集合中移除").clicked() {
-                                                                    if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
-                                                                        remove_from_collection = Some((index, child_idx));
+                                                
+                                                            // 使用固定宽度的空间来避免与集合编辑按钮重合
+                                                            ui.allocate_ui_with_layout(
+                                                                [30.0, 20.0].into(),
+                                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                                |ui| {
+                                                                    if ui.small_button("－").on_hover_text("从集合中移除").clicked() {
+                                                                        if let Some(child_idx) = self.entries.iter().position(|e| &e.id == child_id) {
+                                                                            remove_from_collection = Some((index, child_idx));
+                                                                        }
                                                                     }
                                                                 }
-                                                            });
+                                                            );
                                                         });
                                                     }
                                                 }
@@ -1724,6 +1771,11 @@ impl FileManagerApp {
                                                     if ui.button("+ 添加更多").clicked() {
                                                         edit_collection = Some(index);
                                                     }
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                        if ui.small_button("管理集合").clicked() {
+                                                            edit_collection = Some(index);
+                                                        }
+                                                    });
                                                 });
                                             } else {
                                                 ui.horizontal(|ui| {
@@ -1939,6 +1991,31 @@ impl FileManagerApp {
                 }
             }
 
+            // Cmd/Ctrl+R: 打开/关闭右侧面板
+            if cmd && i.key_pressed(egui::Key::R) && !self.search_currently_focused {
+                let any_panel_open = self.show_add_dialog
+                    || self.show_tag_editor
+                    || self.show_settings
+                    || self.show_import_export
+                    || self.show_tag_manager
+                    || self.show_collection_manager
+                    || self.show_batch_collection_dialog;
+                
+                if any_panel_open {
+                    // 关闭所有面板
+                    self.show_add_dialog = false;
+                    self.show_tag_editor = false;
+                    self.show_settings = false;
+                    self.show_import_export = false;
+                    self.show_tag_manager = false;
+                    self.show_collection_manager = false;
+                    self.show_batch_collection_dialog = false;
+                } else {
+                    // 打开设置面板作为默认
+                    self.show_settings = true;
+                }
+            }
+
             // Escape: 退出当前模式/关闭对话框
             if i.key_pressed(egui::Key::Escape) {
                 if self.multi_select_mode {
@@ -2039,7 +2116,14 @@ impl FileManagerApp {
     }
 
     fn render_settings(&mut self, ui: &mut egui::Ui) {
-        ui.heading("设置");
+        ui.horizontal(|ui| {
+            ui.heading("设置");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("×").clicked() {
+                    self.show_settings = false;
+                }
+            });
+        });
         ui.separator();
 
         ui.label("主题:");
@@ -2438,25 +2522,29 @@ impl eframe::App for FileManagerApp {
                     if self.multi_select_mode {
                         ui.small("多选模式：点击项目切换选择状态，右键查看批量操作");
                     } else {
-                        ui.small(format!("右键多选 {}+N:添加 {}+F:搜索", cmd_key, cmd_key));
+                        ui.small(format!("右键多选 {}+N:添加 {}+F:搜索 {}+R:面板", cmd_key, cmd_key, cmd_key));
                     }
                 });
 
-                // 关闭侧边栏按钮
-                if self.show_add_dialog
-                    || self.show_tag_editor
-                    || self.show_settings
-                    || self.show_import_export
-                    || self.show_tag_manager
-                {
-                    if ui.button("×").clicked() {
-                        self.show_add_dialog = false;
-                        self.show_tag_editor = false;
-                        self.show_settings = false;
-                        self.show_import_export = false;
-                        self.show_tag_manager = false;
-                    }
-                }
+// 关闭侧边栏按钮
+if self.show_add_dialog
+    || self.show_tag_editor
+    || self.show_settings
+    || self.show_import_export
+    || self.show_tag_manager
+    || self.show_collection_manager
+    || self.show_batch_collection_dialog
+{
+    if ui.button("×").clicked() {
+        self.show_add_dialog = false;
+        self.show_tag_editor = false;
+        self.show_settings = false;
+        self.show_import_export = false;
+        self.show_tag_manager = false;
+        self.show_collection_manager = false;
+        self.show_batch_collection_dialog = false;
+    }
+}
             });
         });
 
