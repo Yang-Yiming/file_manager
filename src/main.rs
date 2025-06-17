@@ -1,13 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod async_ops;
 mod config;
 mod file_entry;
 mod fonts;
+mod integration_example;
+mod plugins;
+mod state;
 mod theme;
-
-#[cfg(test)]
-mod test_id_system;
 
 use eframe::egui;
 

@@ -1,3 +1,36 @@
-/target
-*.app
+# Build artifacts
+/target/
+
+# Platform-specific files
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Application bundles
+*.app/
+*.dmg
+*.deb
+*.rpm
+*.msi
+*.exe
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Configuration backup files
+*.bak
+*.backup
+
+# System files
+.Spotlight-V100
+.Trashes
+ehthumbs.db

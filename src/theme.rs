@@ -108,12 +108,4 @@ impl ModernTheme {
 
         visuals
     }
-
-    pub fn weak_text_color(ctx: &egui::Context) -> egui::Color32 {
-        if ctx.style().visuals.dark_mode {
-            egui::Color32::from_rgb(160, 160, 160)
-        } else {
-            egui::Color32::from_rgb(120, 120, 120)
-        }
-    }
 }
